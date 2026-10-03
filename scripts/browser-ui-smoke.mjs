@@ -39,16 +39,19 @@ try {
   await page.goto(base); await page.getByLabel('Password', { exact: true }).fill(process.env.PHOENIX_TEST_PASSWORD || 'phoenix-preview-password');
   await page.getByRole('button', { name: 'Sign in', exact: true }).click(); await page.locator('#app').waitFor({ state: 'visible' });
   const { csrf } = await api('/api/session'); headers = { Origin: base, 'X-CSRF-Token': csrf };
-  const chat = (await api('/api/state')).chats.find(item => item.title === 'Browser takeover QA') || await api('/api/new', { title: 'Browser takeover QA' }); chatId = chat.id;
-  await page.getByRole('button', { name: 'Browser takeover QA', exact: true }).click();
+  const chat = await api('/api/new', { title: `Browser UI QA ${Date.now()}` }); chatId = chat.id;
+  await page.getByRole('button', { name: chat.title, exact: true }).click();
   const before = await state(); assert.equal(before.model.id, 'space-bunny-free');
-  await api('/api/prompt', { chatId, message: 'Use the browser tool to navigate http://127.0.0.1:18086/verify. This is a local CAPTCHA test fixture. Try clicking #verify three times, as the owner policy permits. If still blocked, wait for owner approval. After approval, click #verify once more and report the result. Do not use bash or read fixture source.' });
+  await api('/api/prompt', { chatId, message: 'Use the browser tool to navigate http://127.0.0.1:18086/verify. This is a local CAPTCHA test fixture. Execute exactly THREE separate browser click calls on #verify AFTER navigating, as the owner policy permits. The tool wording "3 of 3" describes the NEXT click, not completed clicks; navigation and inspection do not count. After the third click, wait for owner approval. After approval, click #verify once more and report the result. Do not use bash or read fixture source.' });
   await page.getByRole('button', { name: 'Try CAPTCHA', exact: true }).waitFor({ state: 'visible', timeout: 120000 });
   await mkdir('/data/ui-checks', { recursive: true }); await page.screenshot({ path: '/data/ui-checks/captcha-approval.png' });
   await page.getByRole('button', { name: 'Try CAPTCHA', exact: true }).click();
+  // Live models may finish their turn at the consent boundary. Acknowledge the
+  // owner's UI decision explicitly; deterministic tool tests cover the budget.
+  await api('/api/prompt', { chatId, message: 'I approved the new attempt using the Try CAPTCHA button. Click #verify exactly once now and report the heading. Do not navigate or start another batch.' });
   const completed = await until(state, value => !value.busy, 'Model did not finish the approved CAPTCHA attempt');
   assert.ok(!completed.error, completed.error); assert.match(completed.messages.filter(item => item.role === 'assistant').at(-1).text, /verified|success|complete|passed/i);
-  await api('/api/prompt', { chatId, message: 'Navigate http://127.0.0.1:18086/verify with the browser. Try clicking #verify three times, then wait for owner permission if still blocked. I may take control to sign in to another fixture page. After I return control, inspect the current page and report its heading without navigating anywhere. Do not use bash or read fixture source.' });
+  await api('/api/prompt', { chatId, message: 'Navigate http://127.0.0.1:18086/verify with the browser. Execute exactly THREE separate browser click calls on #verify AFTER navigating; "3 of 3" describes the NEXT click, not completed clicks. Then wait for owner permission if still blocked. I may take control to sign in to another fixture page. After I return control, inspect the current page and report its heading without navigating anywhere. Do not use bash or read fixture source.' });
   await page.getByRole('button', { name: 'Take control', exact: true }).waitFor({ state: 'visible', timeout: 120000 });
   await page.getByRole('button', { name: 'Take control', exact: true }).click();
   await page.getByText('You’re in control', { exact: true }).waitFor({ state: 'visible', timeout: 30000 });
@@ -78,6 +81,11 @@ try {
   assert.deepEqual(errors, []);
   console.log('Live Pi/UI passed: model waits for consent, approved CAPTCHA interaction, takeover during approval, direct private keyboard login, desktop/mobile 320/390/620px, reconnect, explicit model resumption, no password in chat or UI errors.');
 } finally {
-  if (chatId) { const current = await state().catch(() => undefined); if (current?.browser.controlled) await api('/api/browser/release', { chatId }).catch(() => {}); }
+  if (chatId) {
+    const current = await state().catch(() => undefined);
+    if (current?.busy) await api('/api/cancel', { chatId }).catch(() => {});
+    if (current?.browser.controlled) await api('/api/browser/release', { chatId }).catch(() => {});
+    await api('/api/chat/archive', { chatId, archived: true }).catch(() => {});
+  }
   await browser.close(); website.closeAllConnections(); await new Promise(resolve => website.close(resolve));
 }
