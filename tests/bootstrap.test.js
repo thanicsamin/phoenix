@@ -1,0 +1,37 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, mkdir, writeFile, copyFile, readFile, rm, chmod, symlink, lstat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+
+test('launcher seeds a writable copy once, handles local data inside checkout, and preserves edits on reload', async t => {
+  const seed = await mkdtemp(join(tmpdir(), 'phoenix-bootstrap-')); t.after(() => rm(seed, { recursive: true, force: true }));
+  for (const directory of ['src','extensions','web','nix','node_modules']) await mkdir(join(seed, directory));
+  await writeFile(join(seed, 'PHOENIX.md'), 'Packaged Phoenix guide');
+  await mkdir(join(seed, 'node_modules/.bin'));
+  await mkdir(join(seed, 'node_modules/example-cli'));
+  await writeFile(join(seed, 'node_modules/example-cli/cli.js'), "import './relative.js';");
+  await writeFile(join(seed, 'node_modules/example-cli/relative.js'), "console.log('Package relative import works');");
+  await writeFile(join(seed, 'node_modules/example-cli/package.json'), '{"type":"module"}');
+  await symlink('../example-cli/cli.js', join(seed, 'node_modules/.bin/example'));
+  await copyFile(new URL('../src/bootstrap.js', import.meta.url), join(seed, 'src/bootstrap.js'));
+  await copyFile(new URL('../src/generations.js', import.meta.url), join(seed, 'src/generations.js'));
+  await copyFile(new URL('../src/log.js', import.meta.url), join(seed, 'src/log.js'));
+  await writeFile(join(seed, 'src/main.js'), `import {readFile,writeFile} from 'node:fs/promises';\nconst path=process.env.PHOENIX_DATA+'/runs';\nconst count=Number(await readFile(path,'utf8').catch(()=>0))+1;\nawait writeFile(path,String(count));\nawait writeFile(process.env.PHOENIX_DATA+'/prompt',process.env.PHOENIX_CORE_PROMPT);\nif(count===1){await writeFile('PHOENIX.md','Mutable impostor');await writeFile('web/custom.txt','Owner edit');process.exit(42);}\n`);
+  for (const name of ['agent.json','package-lock.json','flake.lock']) await writeFile(join(seed, name), '{}');
+  await writeFile(join(seed, 'package.json'), '{"type":"module"}'); await writeFile(join(seed, 'nix/agent-flake.nix'), '{description="Tools";}');
+  await chmod(join(seed, 'web'), 0o555);
+  const child = spawn(process.execPath, ['src/bootstrap.js'], { cwd: seed, env: { ...process.env, PATH: '/nonexistent', PHOENIX_DATA: join(seed, '.phoenix') }, stdio: 'pipe' });
+  let errors = ''; child.stderr.on('data', chunk => { errors += chunk; });
+  const [exit] = await once(child, 'exit'); assert.equal(exit, 0, errors);
+  assert.equal(await readFile(join(seed, '.phoenix/runs'), 'utf8'), '2');
+  assert.equal(await readFile(join(seed, '.phoenix/workspace/phoenix/web/custom.txt'), 'utf8'), 'Owner edit');
+  assert.match(await readFile(join(seed, '.phoenix/workspace/nix/flake.nix'), 'utf8'), /Tools/);
+  assert.equal(await readFile(join(seed, '.phoenix/prompt'), 'utf8'), 'Packaged Phoenix guide');
+  assert.equal((await lstat(join(seed, '.phoenix/workspace/phoenix/node_modules/.bin/example'))).isSymbolicLink(), true);
+  const cli = spawn(process.execPath, ['node_modules/.bin/example'], { cwd: join(seed, '.phoenix/workspace/phoenix'), stdio: 'pipe' });
+  let output = ''; cli.stdout.on('data', chunk => { output += chunk; });
+  assert.equal((await once(cli, 'exit'))[0], 0); assert.match(output, /Package relative import works/);
+});

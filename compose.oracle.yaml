@@ -1,0 +1,4 @@
+# Oracle Ampere A1: native ARM build; all persistence and limits come from compose.yaml.
+services:
+  phoenix:
+    platform: linux/arm64

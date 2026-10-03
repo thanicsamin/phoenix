@@ -1,0 +1,55 @@
+import { Type } from 'typebox';
+import { lifecycle } from '../src/host.js';
+import { log } from '../src/log.js';
+
+export async function runJob(host, chatId, job, now = Date.now()) {
+  if (job.running || host.closing || host.restarting) return;
+  // Keep due jobs on disk until a slot opens, rather than loading many sessions.
+  if (host.records.flatMap(chat => chat.jobs).filter(item => item.running).length >= 2) return;
+  job.running = true;
+  log.info('job.started', { chatId, jobId: job.id });
+  job.lastRunAt = new Date(now).toISOString();
+  job.nextRunAt = job.everyMinutes ? new Date(now + job.everyMinutes * 60000).toISOString() : null;
+  job.enabled = job.everyMinutes > 0;
+  try {
+    await host.save();
+    await host.submit(job.prompt, `Scheduled task: ${job.name}`, chatId);
+    job.lastError = '';
+    log.info('job.finished', { chatId, jobId: job.id });
+  } catch (error) { job.lastError = error.message; log.error('job.failed', { chatId, jobId: job.id, error }); }
+  finally { job.running = false; await host.save(); }
+}
+export function tick(host, now = Date.now()) {
+  for (const chat of host.records) for (const job of chat.jobs) {
+    if (job.enabled && job.nextRunAt && Date.parse(job.nextRunAt) <= now && !job.running) {
+      runJob(host, chat.id, job, now).catch(error => log.error('job.persist_failed', { chatId: chat.id, jobId: job.id, error }));
+    }
+  }
+}
+
+export default function scheduler(pi, host, _options, chatId = 'main') {
+  let timer;
+  lifecycle(pi, host, 'scheduler', () => {
+    // A run interrupted by a restart is reported, never silently replayed.
+    for (const chat of host.records) for (const job of chat.jobs) if (job.running) {
+      job.running = false; job.lastError = 'Interrupted by restart. Run again when ready.';
+    }
+    timer = setInterval(() => tick(host), 1000);
+    host.runJob = async (id, jobId) => {
+      const job = host.record(id).jobs.find(job => job.id === jobId);
+      if (!job) throw Object.assign(new Error('Job not found.'), { status: 404 });
+      if (job.running) throw Object.assign(new Error('Job is already running.'), { status: 409 });
+      runJob(host, id, job).catch(error => log.error('job.persist_failed', { chatId: id, jobId, error }));
+    };
+  }, () => clearInterval(timer));
+  pi.registerTool({
+    name: 'schedule', label: 'Schedule a task',
+    description: 'Create a scheduled task in this chat. Results return to this conversation while the browser is closed. everyMinutes=0 runs once; otherwise repeat at that interval. nextRunAt is an ISO UTC timestamp. Only create tasks requested by the owner.',
+    parameters: Type.Object({ name: Type.String({ maxLength: 100 }), prompt: Type.String({ maxLength: 16000 }),
+      everyMinutes: Type.Integer({ minimum: 0, maximum: 525600 }), nextRunAt: Type.Optional(Type.String()) }),
+    async execute(_id, input) {
+      const job = await host.addJob(chatId, input);
+      return { content: [{ type: 'text', text: `Scheduled ${job.name}. Next run: ${job.nextRunAt}. Job ID: ${job.id}` }], details: {} };
+    },
+  });
+}

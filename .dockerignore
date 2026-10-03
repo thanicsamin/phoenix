@@ -1,0 +1,7 @@
+node_modules
+.phoenix
+.env*
+!.env.example
+.git
+result*
+coverage

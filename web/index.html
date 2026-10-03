@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#f6f4f0">
+  <script src="/theme.js"></script>
+  <title>Phoenix</title>
+  <link rel="icon" href="/bird.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/vendor/katex/katex.min.css">
+  <script src="/vendor/markdown-it.js" defer></script>
+  <script src="/vendor/katex/katex.min.js" defer></script>
+  <script src="/vendor/texmath.js" defer></script>
+  <script src="/vendor/purify.js" defer></script>
+  <script src="/markdown.js" defer></script>
+  <script src="/voice.js" defer></script>
+  <script src="/browser.js" defer></script>
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <section id="login" class="login" hidden>
+    <div class="login-card">
+      <div class="mark large" aria-hidden="true"><img src="/bird.svg" alt=""></div>
+      <h1>Phoenix</h1>
+      <form id="login-form">
+        <label class="sr-only" for="password">Password</label>
+        <input id="password" type="password" placeholder="Password" autocomplete="current-password" required autofocus>
+        <button class="primary" type="submit">Sign in</button>
+      </form>
+      <p id="login-error" class="error" role="alert"></p>
+    </div>
+  </section>
+  <div id="app" class="app" hidden>
+    <button id="chat-backdrop" class="chat-backdrop" aria-label="Close chats" hidden></button>
+    <aside class="sidebar" id="sidebar">
+      <a class="brand" href="/"><span class="mark" aria-hidden="true"><img src="/bird.svg" alt=""></span><span>Phoenix</span></a>
+      <button id="new-chat" class="new-chat" aria-label="New chat">＋ <span>New chat</span></button>
+      <div id="chat-list" class="chat-list" aria-label="Chats"></div>
+      <button id="archive-chat" type="button" aria-label="Archive chat" hidden>Archive chat</button>
+      <button id="archived-chats" type="button" aria-pressed="false" hidden>Archived</button>
+      <div class="sidebar-footer">
+        <button id="files">Files</button>
+        <button id="settings">Settings</button>
+      </div>
+    </aside>
+    <main>
+      <header class="topbar">
+        <div class="chat-heading"><button id="chat-menu" class="header-button" aria-label="Chats" aria-expanded="false" aria-controls="sidebar">☰</button><span id="agent-name" class="sr-only">Phoenix</span><span id="chat-title">Main chat</span></div>
+        <div class="header-actions"><span id="connection" class="connection">Connecting…</span><button id="refresh-ui" class="header-button" hidden>Refresh UI</button><button id="browser" class="header-button" hidden>Browser</button><button id="jobs" class="header-button">Jobs</button><button id="mobile-settings" class="header-button" aria-label="Settings">⚙</button></div>
+      </header>
+      <div class="conversation"><div class="chat-scroll" id="chat-scroll">
+        <section id="welcome" class="welcome">
+          <div class="mark large" aria-hidden="true"><img src="/bird.svg" alt=""></div>
+          <div id="key-banner" hidden><button id="connect-key">Connect OpenCode</button></div>
+        </section>
+        <section id="messages" class="messages" aria-label="Conversation" aria-live="polite"></section>
+      </div>
+      <button id="latest-message" class="latest-message" hidden>↓ Latest</button></div>
+      <div class="composer-area">
+        <div id="approvals" aria-live="polite"></div>
+        <p id="agent-error" class="error" role="alert"></p>
+        <p id="activity" class="activity" role="status"></p>
+        <form id="composer" class="composer">
+          <label class="sr-only" for="message">Message your agent</label>
+          <textarea id="message" placeholder="Message…" rows="1" maxlength="32000"></textarea>
+          <div id="draft-files" class="attachments"></div>
+          <div class="composer-bottom"><div class="input-tools"><button id="attach" type="button" aria-label="Attach files" title="Attach files">＋</button><input id="attachment-files" type="file" multiple hidden><button id="microphone" type="button" aria-label="Dictate message" title="Dictate message" hidden>◉</button></div><div class="chat-controls"><label class="sr-only" for="model">Model</label><select id="model" aria-label="Model"></select><label class="sr-only" for="thinking">Thinking</label><select id="thinking" aria-label="Thinking" title="Thinking level"></select></div><button id="steer" type="submit" title="Redirect the current task" hidden>Steer</button><button id="stop" type="button" hidden>Stop</button><button id="send" class="send" type="submit" aria-label="Send message">↑</button></div>
+        </form>
+      </div>
+    </main>
+  </div>
+  <dialog id="browser-dialog" aria-label="Control the agent browser">
+    <div class="browser-heading"><strong>Browser</strong><span id="browser-status" role="status">Connecting…</span><button id="return-browser" type="button">Return to agent</button><button id="close-browser" type="button" aria-label="Close browser view">×</button></div>
+    <form id="browser-address"><button id="browser-back" type="button" aria-label="Go back">←</button><button id="browser-reload" type="button" aria-label="Reload page">↻</button><label class="sr-only" for="browser-url">Website address</label><input id="browser-url" type="url" placeholder="https://…" autocomplete="off"><button type="submit">Go</button></form>
+    <div id="browser-view"><canvas id="browser-screen" tabindex="0" aria-label="Website view. Click to focus a field, then type. Use Tab to move between fields."></canvas></div>
+    <div class="browser-input"><input id="browser-keyboard" type="password" placeholder="Type into selected field…" aria-label="Type into selected website field" autocomplete="off" autocapitalize="off" spellcheck="false"><button id="browser-tab" type="button">Tab</button><button id="browser-enter" type="button">Enter</button><button id="browser-reconnect" type="button" hidden>Reconnect</button></div>
+  </dialog>
+  <dialog id="settings-dialog">
+    <form id="key-form">
+      <button id="close-settings" class="dialog-close" type="button" aria-label="Close settings">×</button>
+      <h2>Settings</h2>
+      <label for="api-key">OpenCode API key</label><input type="password" id="api-key" autocomplete="off" minlength="8" required>
+      <p id="settings-model" class="muted"></p>
+      <button type="submit" class="primary">Save key</button>
+      <p id="key-error" class="error" role="alert"></p>
+    </form>
+    <label for="theme">Theme</label><select id="theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select>
+    <details><summary>System prompt</summary><form id="prompt-form"><label class="sr-only" for="system-prompt">System prompt</label><textarea id="system-prompt" rows="9" maxlength="200000"></textarea><button type="submit" class="primary">Save prompt</button><p id="prompt-status" class="muted" role="status"></p></form></details>
+    <details id="internet-settings" hidden><summary>Internet</summary><p id="internet-status" class="muted" role="status"></p><div class="setup-actions"><button id="internet-toggle">Use my internet</button><button id="internet-forget" hidden>Disconnect computer</button></div><p id="internet-error" class="error" role="alert"></p></details>
+    <details><summary>Extensions</summary><div id="extensions"></div></details>
+    <details><summary>Setup</summary><div class="setup-actions"><a class="button" href="/api/setup" download="agent.json">Export setup</a><button id="import-setup">Import setup</button></div><input id="setup-file" type="file" accept=".json,application/json" hidden></details>
+    <div class="account-actions"><button id="logout">Sign out</button></div>
+  </dialog>
+  <dialog id="files-dialog">
+    <button id="close-files" class="dialog-close" aria-label="Close files">×</button>
+    <h2>Files</h2>
+    <div class="files-body">
+      <div class="file-navigation"><div class="file-toolbar"><button id="file-back" aria-label="Parent folder">↑</button><span id="file-directory"></span><button id="new-file" aria-label="New file" title="New file">＋</button></div>
+        <form id="new-file-form" hidden><label class="sr-only" for="new-file-name">File name</label><input id="new-file-name" required maxlength="160" placeholder="MEMORY.md"><button type="submit">Create</button></form><div id="file-list" class="file-list"></div>
+      </div>
+      <section id="file-editor" hidden><div class="file-toolbar"><button id="file-list-back" aria-label="Back to files">←</button><strong id="file-name"></strong><a id="file-download" download>Download</a><button id="file-preview" aria-pressed="false" hidden>Preview</button></div><label class="sr-only" for="file-text">File contents</label><textarea id="file-text" maxlength="200000" spellcheck="false"></textarea><div id="file-rendered" class="markdown" hidden></div><div class="editor-actions"><button id="file-save" class="primary" disabled>Save</button><span id="file-dirty" class="muted" role="status"></span></div></section>
+      <div id="file-empty" class="file-empty">Select a file</div>
+    </div>
+    <div class="files-footer"><p id="file-status" class="muted" role="status"></p><div class="file-actions"><button id="apply-ui" title="Publish web changes without restarting chats" hidden>Apply UI</button><button id="reload-agent" title="Publish backend changes and restart the agent">Reload agent</button><details><summary>History</summary><h3>Interface</h3><div id="ui-generation-list"></div><h3>Agent</h3><div id="generation-list"></div></details></div></div>
+  </dialog>
+  <dialog id="internet-dialog"><button id="close-internet" class="dialog-close" aria-label="Close connector">×</button><h2>Use your internet</h2><p>Download the connector and run it on your computer. Keep it open while Phoenix uses your connection.</p><p>Requires <a href="https://nodejs.org/en/download" target="_blank" rel="noopener noreferrer">Node.js 22 or newer</a> on Windows, Linux or macOS.</p><button id="internet-download" class="primary">Download connector</button><p class="muted">Run in its folder: <code>node phoenix-connect.mjs</code></p><p id="internet-pair-status" class="muted" role="status"></p></dialog>
+  <dialog id="discard-dialog"><h2>Discard changes?</h2><div class="discard-actions"><button id="keep-editing" autofocus>Keep editing</button><button id="discard-file">Discard</button></div></dialog>
+  <dialog id="jobs-dialog">
+    <button id="close-jobs" class="dialog-close" type="button" aria-label="Close jobs">×</button>
+    <h2>Jobs</h2><p class="muted" id="jobs-chat"></p>
+    <div id="job-list"></div>
+    <form id="job-form">
+      <label for="job-name">Name</label><input id="job-name" required maxlength="100" placeholder="Inbox check">
+      <label for="job-prompt">Task</label><textarea id="job-prompt" required maxlength="16000" rows="3" placeholder="Summarize my unread emails."></textarea>
+      <div class="job-fields"><div><label for="job-start">First run</label><input id="job-start" type="datetime-local" required></div><div><label for="job-repeat">Repeat</label><select id="job-repeat"><option value="0">Once</option><option value="60">Hourly</option><option value="1440">Daily</option><option value="10080">Weekly</option></select></div></div>
+      <button class="primary" type="submit">Schedule</button><p id="job-error" class="error" role="alert"></p>
+    </form>
+  </dialog>
+  <dialog id="chat-dialog">
+    <form id="chat-form"><button id="close-chat" class="dialog-close" type="button" aria-label="Close new chat">×</button><h2>New chat</h2><label for="chat-name">Name</label><input id="chat-name" required maxlength="100" placeholder="Travel"><button class="primary" type="submit">Create</button><p id="chat-error" class="error" role="alert"></p></form>
+  </dialog>
+</body>
+</html>

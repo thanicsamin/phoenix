@@ -1,0 +1,36 @@
+services:
+  phoenix:
+    build: .
+    image: phoenix-agent:local
+    init: true
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - phoenix-data:/data
+      - nix-store:/nix/store
+      - nix-state:/nix/var/nix
+      - ./agent.json:/app/agent.json:ro
+    env_file:
+      - path: .env
+        required: false
+    mem_limit: ${PHOENIX_MEMORY_LIMIT:-2g}
+    memswap_limit: ${PHOENIX_MEMORY_LIMIT:-2g}
+    cpus: ${PHOENIX_CPU_LIMIT:-1}
+    shm_size: 256mb
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=64m
+    stop_grace_period: 15s
+volumes:
+  phoenix-data:
+  nix-store:
+  nix-state:
