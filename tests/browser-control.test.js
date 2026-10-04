@@ -91,7 +91,7 @@ test('browser socket rejects missing auth, foreign origins, preview sessions and
   const host = { ...fixture().host, auth: await createAuth(directory, { password: 'browser-socket-password' }), cleanups: [],
     record: id => { if (id !== 'main') throw Error('Unknown chat'); }, getChat: async id => { if (id !== 'main') throw Error('Unknown chat'); } };
   let claims = 0; let views = 0; let releases = 0; const inputs = [];
-  const control = { controlled: false, view: async socket => { views++; control.socket = socket; socket.send(JSON.stringify({ type: 'ready', controlled: false })); }, claim: async socket => { claims++; control.controlled = true; socket.send(JSON.stringify({ type: 'ready', controlled: true })); }, input: async (_socket, data) => { if (!control.controlled) throw Error('View only'); inputs.push(data); }, disconnect: async () => {}, release: async () => { releases++; } };
+  const control = { controlled: false, view: async socket => { views++; control.socket = socket; socket.send(JSON.stringify({ type: 'ready', controlled: false })); }, claim: async socket => { claims++; control.controlled = true; socket.send(JSON.stringify({ type: 'ready', controlled: true })); await new Promise(resolve => setTimeout(resolve, 40)); }, input: async (_socket, data) => { if (!control.controlled) throw Error('View only'); inputs.push(data); }, disconnect: async () => {}, release: async () => { releases++; } };
   host.browserControls = new Map([['main', control]]);
   const server = createWebServer(host); server.listen(0, '127.0.0.1'); await once(server, 'listening'); host.port = server.address().port;
   t.after(async () => { for (const cleanup of host.cleanups) await cleanup(); server.closeWebSockets(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await rm(directory, { recursive: true, force: true }); });
@@ -119,7 +119,7 @@ test('browser socket rejects missing auth, foreign origins, preview sessions and
   assert.equal(JSON.parse((await deniedInput)[0]).type, 'error'); assert.equal(inputs.length, 0);
   const taken = once(socket, 'message'); socket.send(JSON.stringify({ type: 'take' }));
   assert.equal(JSON.parse((await taken)[0]).controlled, true); assert.equal(claims, 1);
-  socket.send(JSON.stringify({ type: 'text', text: 'private-login-input' })); await new Promise(resolve => setTimeout(resolve, 20));
+  socket.send(JSON.stringify({ type: 'text', text: 'private-login-input' })); await new Promise(resolve => setTimeout(resolve, 70));
   assert.equal(inputs[0].text, 'private-login-input');
   host.auth.logout(auth.token); const closed = once(socket, 'close'); socket.send(JSON.stringify({ type: 'key', key: 'Enter' })); assert.equal((await closed)[0], 1008);
 });

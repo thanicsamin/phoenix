@@ -13,7 +13,7 @@ export function attachBrowserSocket(server, host, tokenFrom, allowedHost) {
       return socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
     }
     sockets.handleUpgrade(request, socket, head, connection => {
-      let control; let starting = false; let closed = false; let taking = false;
+      let control; let starting = false; let closed = false; let taking = false; let prepared; let takeover;
       let width; let height;
       connection.alive = true; connection.ownerToken = token;
       const timer = setTimeout(() => connection.close(1008, 'Start browser control'), 5000); timer.unref();
@@ -36,14 +36,17 @@ export function attachBrowserSocket(server, host, tokenFrom, allowedHost) {
             control = host.browserControls?.get(data.chatId);
             if (!control) throw Error();
             width = data.width; height = data.height;
-            await control.view(connection);
+            prepared = control.view(connection); await prepared;
           } else if (data.type === 'take') {
-            if (starting || taking || control.controlled) throw Error();
+            if (taking || control.controlled) throw Error();
             taking = true;
-            try { await control.claim(connection, width, height); }
+            takeover = (async () => { await prepared; if (!closed) await control.claim(connection, width, height); })();
+            try { await takeover; }
             finally { taking = false; }
           } else {
-            if (taking) throw Error();
+            // The ready frame can reach the owner before CDP finishes setup.
+            // Preserve immediate input instead of rejecting that first click.
+            await prepared; await takeover; if (closed) return;
             await control.input(connection, data);
           }
           starting = false;
