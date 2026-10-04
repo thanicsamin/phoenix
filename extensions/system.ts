@@ -16,7 +16,7 @@ export default function system(pi: ExtensionAPI, host: Host, _options: Extension
   });
   pi.registerTool({
     name: 'reload_agent', label: 'Reload agent',
-    description: 'Check syntax, create an immutable Nix generation of the edited source and dependencies, then reload Phoenix. The editable source is in workspace/phoenix. Prior generations can be restored with rollback_agent. Nix tools use a separate persistent profile from workspace/nix/flake.nix. Only apply changes the owner requested, after checking them.',
+    description: 'Check strict TypeScript, compile browser assets, and create an immutable Nix generation of the edited source and dependencies, then reload Phoenix. The editable source is in workspace/phoenix. Prior generations can be restored with rollback_agent. Nix tools use a separate persistent profile from workspace/nix/flake.nix. Only apply changes the owner requested, after checking them.',
     parameters: Type.Object({}),
     async execute() {
       if ([...host.loaded.values()].some(chat => chat.pending && chat.chatId !== chatId)) throw new Error('Wait for other chats to finish before reloading.');
