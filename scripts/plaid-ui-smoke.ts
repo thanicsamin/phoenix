@@ -42,6 +42,11 @@ const clickBank = async name => { await page.frameLocator('iframe[title="Bank si
 try {
   await page.goto(base); await page.getByLabel('Password', { exact: true }).fill('plaid-ui-fixture-password'); await page.getByRole('button', { name: 'Sign in', exact: true }).click(); await page.locator('#app').waitFor({ state: 'visible' });
   await page.locator('#settings').click(); await page.getByText('Finances', { exact: true }).click(); assert.equal(external.length, 0, 'Plaid loaded before linking was requested');
+  await page.route('**/api/plaid/configure', route => route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: 'Fixture rejected credentials' }) }), { times: 1 });
+  await page.getByLabel('Client ID', { exact: true }).fill('keep-this-draft'); await page.getByLabel('Secret', { exact: true }).fill('fixture-secret');
+  await page.getByRole('button', { name: 'Save Plaid credentials', exact: true }).click(); await page.locator('#plaid-error').getByText('Fixture rejected credentials', { exact: true }).waitFor();
+  assert.equal(await page.getByLabel('Client ID', { exact: true }).inputValue(), 'keep-this-draft');
+  assert.equal(await page.getByLabel('Secret', { exact: true }).inputValue(), '');
   await page.getByLabel('Client ID', { exact: true }).fill('fixture-client'); await page.getByLabel('Secret', { exact: true }).fill('fixture-secret'); await page.getByRole('button', { name: 'Save Plaid credentials', exact: true }).click();
   await page.getByRole('button', { name: 'Connect bank', exact: true }).waitFor({ state: 'visible' }); assert.equal(await page.getByLabel('Secret', { exact: true }).inputValue(), '');
   await page.getByRole('button', { name: 'Connect bank', exact: true }).click(); await clickBank('Cancel');
@@ -50,6 +55,7 @@ try {
   host.ui.version = 'fixture-v2'; host.changed(); await page.locator('#refresh-ui').waitFor({ state: 'visible' });
   assert.equal(await page.locator('iframe[title="Bank sign-in"]').isVisible(), true, 'UI update interrupted bank sign-in');
   failExchange = true; await clickBank('Complete sign-in'); await page.getByRole('button', { name: 'Retry saving connection', exact: true }).waitFor({ state: 'visible' });
+  assert.equal(await page.getByRole('button', { name: 'Save Plaid credentials', exact: true }).isDisabled(), true, 'Credential changes could invalidate a pending save');
   assert.equal(host.plaid.status().items.length, 0); failExchange = false; await page.getByRole('button', { name: 'Retry saving connection', exact: true }).click();
   await page.locator('#plaid-items').getByText('Fixture bank', { exact: true }).waitFor({ state: 'visible' }); assert.equal(host.plaid.status().items.length, 1);
   assert.equal(await page.getByLabel('Client ID', { exact: true }).isDisabled(), true);
@@ -66,6 +72,28 @@ try {
   assert.equal(await page.evaluate(() => window.fixtureReceivedRedirect, undefined, {}, false), base + '/?oauth_state_id=fixture-state'); assert.equal(new URL(page.url()).search, '');
   page.once('dialog', dialog => dialog.accept()); await page.getByRole('button', { name: 'Disconnect', exact: true }).click(); await page.waitForFunction(() => document.querySelector('#plaid-status').textContent.includes('0 connected'));
   assert.equal(host.plaid.status().items.length, 0); assert.ok(await page.locator('#plaid-items').textContent() === '');
+  // An expired pending save must allow a fresh sign-in instead of trapping the owner.
+  failExchange = true; await page.getByRole('button', { name: 'Connect bank', exact: true }).click(); await clickBank('Complete sign-in');
+  await page.getByRole('button', { name: 'Retry saving connection', exact: true }).waitFor({ state: 'visible' });
+  await page.route('**/api/plaid/complete', route => route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: 'This bank connection expired. Connect again.' }) }), { times: 1 });
+  await page.getByRole('button', { name: 'Retry saving connection', exact: true }).click();
+  await page.getByRole('button', { name: 'Retry saving connection', exact: true }).waitFor({ state: 'hidden' });
+  assert.equal(await page.getByRole('button', { name: 'Connect bank', exact: true }).isDisabled(), false);
+  failExchange = false; await page.getByRole('button', { name: 'Connect bank', exact: true }).click(); await clickBank('Complete sign-in');
+  await page.locator('#plaid-items').getByText('Fixture bank', { exact: true }).waitFor({ state: 'visible' });
+  // Hold an authenticated response until after logout. It must not restore private DOM.
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(base); await page.locator('#app').waitFor({ state: 'visible' });
+  let release; let notify; const requested = new Promise(resolve => { notify = resolve; });
+  await page.route('**/api/plaid/status', async route => {
+    const response = await route.fetch(); await new Promise(resolve => { release = resolve; notify(); }); await route.fulfill({ response });
+  }, { times: 1 });
+  await page.locator('#settings').click(); await requested;
+  await page.locator('#logout').click(); await page.locator('#login').waitFor({ state: 'visible' });
+  const delivered = page.waitForResponse(response => new URL(response.url()).pathname === '/api/plaid/status'); release(); await delivered;
+  await new Promise(resolve => setTimeout(resolve, 100));
+  await page.waitForFunction(() => document.querySelector('#plaid-items').textContent === '' && document.querySelector('#messages').textContent === '');
+  assert.equal(await page.locator('#settings-dialog').isVisible(), false);
   violations.push(...await page.evaluate(() => window.fixtureViolations || [], undefined, {}, false)); assert.deepEqual(violations, []); assert.deepEqual(errors, []);
-  console.log('Plaid browser passed: lazy SDK, credential clearing, clickable bank iframe, cancellation, save retry, reconnect without a new Item, mobile OAuth return, disconnect and 320/390/1280px layouts. No live banks or model calls.');
+  console.log('Plaid browser passed: lazy SDK, draft preservation, credential clearing, bank iframe, cancellation, save retry, expired-flow recovery, reconnect, mobile OAuth, disconnect, logout race and 320/390/1280px layouts. No live banks or model calls.');
 } finally { await browser.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await host.close(); await rm(data, { recursive: true, force: true }); }

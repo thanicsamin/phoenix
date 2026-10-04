@@ -157,3 +157,22 @@ test('cancelled Link dialogs do not prevent later connections; pending state sta
   const bad = await fixture(t, { redirectUri: 'https://name:password@phoenix.example/' }); await bad.plaid.configure(credentials);
   await assert.rejects(bad.plaid.link(undefined, 'https://phoenix.example'), /match the Phoenix/);
 });
+
+test('overlapping bank sign-ins cannot exceed the persisted connection limit', async t => {
+  const f = await fixture(t); await f.plaid.configure(credentials);
+  for (let i = 0; i < 19; i++) await f.connect();
+  const first = await f.plaid.link(); const second = await f.plaid.link();
+  let exchanges = 0;
+  f.setFailure(path => path === '/item/public_token/exchange' ? Response.json({ item_id: `overlap-${++exchanges}`, access_token: `overlap-private-${exchanges}` }) : undefined);
+  await f.plaid.complete({ token: first.token, publicToken: 'public-first' });
+  await assert.rejects(f.plaid.complete({ token: second.token, publicToken: 'public-second' }), /Disconnect a bank/);
+  assert.equal(exchanges, 1, 'Do not exchange a token that cannot be saved');
+  const reopened = await Plaid.open(f.directory, options, f.request);
+  assert.equal(reopened.status().items.length, 20);
+});
+
+test('interrupted response streams report a safe retryable error', async t => {
+  const f = await fixture(t); await f.plaid.configure(credentials); await f.connect();
+  f.setFailure(() => new Response(new ReadableStream({ start(controller) { controller.error(Error('access-private-1 transport failed')); } })));
+  await assert.rejects(f.plaid.read({ action: 'accounts' }), error => error.status === 502 && /interrupted|timed out/.test(error.message) && !/private/.test(error.message));
+});

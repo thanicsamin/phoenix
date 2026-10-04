@@ -34,3 +34,31 @@ test('WebSocket checks origin/auth, pushes updates, switches chats and revokes l
   const closing=once(socket,'close');host.auth.logout(login.token);host.emit('change');
   assert.equal((await closing)[0],1008);
 });
+
+test('changes during a slow state read are delivered; logout revokes the in-flight reply', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'phoenix-socket-race-'));
+  const host = new EventEmitter(); host.auth = await createAuth(directory, { password: 'socket-race-password' });
+  host.record = () => {}; let revision = 0; let release; let started;
+  let nextRead = new Promise(resolve => { started = resolve; });
+  host.state = async chatId => {
+    const snapshot = { chatId, revision, messages: [] };
+    if (started) { const notify = started; started = undefined; await new Promise(resolve => { release = resolve; notify(); }); }
+    return snapshot;
+  };
+  const server = createWebServer(host); server.listen(0, '127.0.0.1'); await once(server, 'listening'); host.port = server.address().port;
+  t.after(async () => { release?.(); server.closeWebSockets(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await rm(directory, { recursive: true, force: true }); });
+  const origin = `http://127.0.0.1:${host.port}`; const login = await host.auth.login('socket-race-password');
+  const socket = new WebSocket(origin.replace('http:', 'ws:') + '/api/socket', { headers: { Origin: origin, Cookie: `phoenix=${login.token}` } });
+  const delivered = []; socket.on('message', data => delivered.push(JSON.parse(data)));
+  await once(socket, 'open'); await nextRead;
+  revision = 1; host.emit('change'); await new Promise(resolve => setTimeout(resolve, 100));
+  const update = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(Error('Latest state was dropped')), 2000);
+    socket.on('message', data => { if (JSON.parse(data).revision === 1) { clearTimeout(timer); resolve(); } });
+  });
+  release(); await update; assert.deepEqual(delivered.map(state => state.revision), [0, 1]);
+  nextRead = new Promise(resolve => { started = resolve; }); revision = 2; host.emit('change'); await nextRead;
+  const closing = once(socket, 'close', { signal: AbortSignal.timeout(2000) });
+  host.auth.logout(login.token); release();
+  assert.equal((await closing)[0], 1008); assert.equal(delivered.some(state => state.revision === 2), false);
+});

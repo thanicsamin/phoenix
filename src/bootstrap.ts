@@ -23,7 +23,7 @@ try { await access(join(app, 'src', 'main.ts')).catch(() => access(join(app, 'sr
 catch {
   await mkdir(app, { recursive: true });
   for (const name of ['src', 'extensions', 'web', 'nix', 'package.json', 'package-lock.json', 'flake.lock', 'agent.json', 'tsconfig.json', 'tsconfig.web.json', 'node_modules']) {
-    await cp(join(seed, name), join(app, name), { recursive: true, dereference: name !== 'node_modules' });
+    await cp(join(seed, name), join(app, name), { recursive: true, dereference: name !== 'node_modules', verbatimSymlinks: name === 'node_modules' });
     if (['src', 'extensions', 'web', 'nix', 'node_modules'].includes(name)) await makeWritable(join(app, name));
     else await chmod(join(app, name), 0o600);
   }

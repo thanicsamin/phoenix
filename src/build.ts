@@ -17,11 +17,14 @@ export async function checkProject(root: string, webOnly = false) {
 export async function compileWeb(directory: string) {
   const files = (await readdir(directory)).filter(name => name.endsWith('.ts') && !name.endsWith('.d.ts'));
   if (!files.length) return; // Earlier JavaScript generations remain restorable.
+  // Parse the whole candidate before replacing any currently served asset.
+  const outputs: { name: string; text: string }[] = [];
   for (const name of files) {
     const outputText = stripTypeScriptTypes(await readFile(join(directory, name), 'utf8'));
     // Classic scripts preserve early theme application and vendor loading order.
-    await writeFile(join(directory, name.slice(0, -3) + '.js'), outputText.replace(/^export \{\};\s*$/gm, ''), { mode: 0o600 });
+    outputs.push({ name: name.slice(0, -3) + '.js', text: outputText.replace(/^export \{\};\s*$/gm, '') });
   }
+  for (const output of outputs) await writeFile(join(directory, output.name), output.text, { mode: 0o600 });
 }
 export async function isTypeScriptProject(root: string) {
   return access(join(root, 'src/main.ts')).then(() => true, () => false);

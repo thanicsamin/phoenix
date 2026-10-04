@@ -9,13 +9,15 @@ export function attachWebSocket(server: WebServer, host: Host, tokenFrom: TokenF
   let timer: NodeJS.Timeout | undefined;
   let closed = false;
   async function publish(socket: PhoenixSocket) {
-    if (closed || socket.readyState !== WebSocket.OPEN || socket.sending) return;
+    if (closed || socket.readyState !== WebSocket.OPEN) return;
+    if (socket.sending) { socket.dirty = true; return; }
     if (!host.auth.get(socket.token)) return socket.close(1008, 'Session expired');
     if (socket.bufferedAmount > 1024 * 1024) return socket.terminate();
-    socket.sending = true;
+    socket.sending = true; socket.dirty = false;
     const chatId = socket.chatId;
     try {
       const state = await host.state(chatId);
+      if (!host.auth.get(socket.token)) return socket.close(1008, 'Session expired');
       if (chatId === socket.chatId && socket.readyState === WebSocket.OPEN) {
         // Don't resend the model catalog and full history for every streamed token.
         if (socket.previousChat !== chatId) { socket.previous = new Map(); socket.previousChat = chatId; }
@@ -27,7 +29,7 @@ export function attachWebSocket(server: WebServer, host: Host, tokenFrom: TokenF
         if (Object.keys(patch).length > 1) socket.send(JSON.stringify(patch));
       }
     } catch { socket.close(1008, 'Invalid chat'); }
-    finally { socket.sending = false; }
+    finally { socket.sending = false; if (socket.dirty) void publish(socket); }
   }
   const changed = () => {
     if (timer || closed) return;

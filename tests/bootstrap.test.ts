@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, copyFile, readFile, rm, chmod, symlink, lstat } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, copyFile, readFile, rm, chmod, symlink, lstat, readlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -31,7 +31,9 @@ test('launcher seeds a writable copy once, handles local data inside checkout, a
   assert.match(await readFile(join(seed, '.phoenix/workspace/nix/flake.nix'), 'utf8'), /Tools/);
   assert.equal(await readFile(join(seed, '.phoenix/prompt'), 'utf8'), 'Packaged Phoenix guide');
   assert.equal((await lstat(join(seed, '.phoenix/workspace/phoenix/node_modules/.bin/example'))).isSymbolicLink(), true);
+  assert.equal(await readlink(join(seed, '.phoenix/workspace/phoenix/node_modules/.bin/example')), '../example-cli/cli.js');
+  await writeFile(join(seed, '.phoenix/workspace/phoenix/node_modules/example-cli/relative.js'), "console.log('Editable package import works');");
   const cli = spawn(process.execPath, ['node_modules/.bin/example'], { cwd: join(seed, '.phoenix/workspace/phoenix'), stdio: 'pipe' });
   let output = ''; cli.stdout.on('data', chunk => { output += chunk; });
-  assert.equal((await once(cli, 'exit'))[0], 0); assert.match(output, /Package relative import works/);
+  assert.equal((await once(cli, 'exit'))[0], 0); assert.match(output, /Editable package import works/);
 });

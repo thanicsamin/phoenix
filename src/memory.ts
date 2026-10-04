@@ -95,7 +95,9 @@ export class MemoryJournal {
     const days = await this.days(); if (!days.length) return '(empty)';
     const recent: string[] = [];
     for (const day of days.slice(-3)) for await (const note of this.notes(day)) { recent.push(`${note.at} ${note.text}`); if (recent.length > 16) recent.shift(); }
-    const periods = ['all', ...new Set([...new Set(days.map(day => day.slice(0, 4)))].slice(-3).concat([...new Set(days.map(day => day.slice(0, 7)))].slice(-3), days.slice(-7)))];
+    const years = [...new Set(days.map(day => day.slice(0, 4)))].slice(-3).reverse();
+    const months = [...new Set(days.map(day => day.slice(0, 7)))].slice(-3).reverse();
+    const periods = [...days.slice(-7).reverse(), ...months, ...years, 'all'];
     const summaries: string[] = [];
     let summarySize = 0;
     for (const period of periods) { const text = await this.summary(period); if (text && summarySize + text.length < 4000) { summaries.push(text); summarySize += text.length; } }

@@ -32,3 +32,16 @@ test('browser publication emits ordinary JavaScript and rejects broken syntax', 
   await assert.rejects(compileWeb(root));
   assert.equal(await readFile(join(root, 'app.js'), 'utf8'), code);
 });
+
+test('a syntax error in a later browser file preserves every published asset', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'phoenix-web-build-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(join(root, 'a.ts'), 'const version: number = 1;');
+  await writeFile(join(root, 'z.ts'), 'const version: number = 1;');
+  await compileWeb(root);
+  const previous = await readFile(join(root, 'a.js'), 'utf8');
+  await writeFile(join(root, 'a.ts'), 'const version: number = 2;');
+  await writeFile(join(root, 'z.ts'), 'const broken: = ;');
+  await assert.rejects(compileWeb(root));
+  assert.equal(await readFile(join(root, 'a.js'), 'utf8'), previous);
+});

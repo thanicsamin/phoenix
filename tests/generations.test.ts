@@ -1,0 +1,31 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, mkdir, writeFile, readFile, readlink, symlink, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Generations } from '../src/generations.ts';
+
+test('rollback keeps relative package links editable and restores source if switching fails', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'phoenix-rollback-'));
+  const originalPath = process.env.PATH;
+  t.after(async () => { process.env.PATH = originalPath; await rm(root, { recursive: true, force: true }); });
+  const bin = join(root, 'bin'); const app = join(root, 'app'); const snapshot = join(root, 'snapshot');
+  for (const path of [bin, app, join(snapshot, 'node_modules/.bin'), join(snapshot, 'node_modules/pkg')]) await mkdir(path, { recursive: true });
+  const nix = join(bin, 'nix-env'); await writeFile(nix, `#!${process.execPath}\nprocess.exit(0);\n`, { mode: 0o700 });
+  process.env.PATH = `${bin}:${originalPath}`;
+  await writeFile(join(app, 'version'), 'current'); await writeFile(join(snapshot, 'version'), 'previous');
+  await writeFile(join(snapshot, 'node_modules/pkg/cli.js'), 'previous package');
+  await symlink('../pkg/cli.js', join(snapshot, 'node_modules/.bin/tool'));
+  const generations = new Generations(root, app); generations.available = true;
+  await symlink(snapshot, generations.profile + '-1-link');
+  generations.history = async () => ({ available: true, generations: [{ id: 1, current: true, date: 'fixture' }] });
+  await generations.switch(1);
+  assert.equal(await readlink(join(app, 'node_modules/.bin/tool')), '../pkg/cli.js');
+  await writeFile(join(app, 'node_modules/pkg/cli.js'), 'updated package');
+  assert.equal(await readFile(join(app, 'node_modules/.bin/tool'), 'utf8'), 'updated package');
+  await writeFile(join(app, 'version'), 'keep my edits');
+  await writeFile(nix, `#!${process.execPath}\nprocess.exit(1);\n`, { mode: 0o700 });
+  await assert.rejects(generations.switch(1));
+  assert.equal(await readFile(join(app, 'version'), 'utf8'), 'keep my edits');
+  assert.equal(await readFile(join(app, 'node_modules/.bin/tool'), 'utf8'), 'updated package');
+});

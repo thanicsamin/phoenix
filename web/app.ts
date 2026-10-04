@@ -7,6 +7,7 @@ let csrf = '';
 let revision = -1;
 let latest: ChatState | undefined;
 let signedIn = false;
+let authGeneration = 0;
 let polling = false;
 let chatId = 'main';
 let showingArchived = false;
@@ -69,23 +70,26 @@ function connectSocket() {
   const connection = new WebSocket(url); socket = connection;
   connection.addEventListener('open', () => connection.send(JSON.stringify({ chatId })));
   connection.addEventListener('message', event => {
-    try { const state = JSON.parse(event.data); if (signedIn && state.chatId === chatId) render({ ...(latest?.chatId === chatId ? latest : {}), ...state }); } catch { /* polling remains available */ }
+    try { const state = JSON.parse(event.data); if (signedIn && socket === connection && state.chatId === chatId) render({ ...(latest?.chatId === chatId ? latest : {}), ...state }); } catch { /* polling remains available */ }
   });
   connection.addEventListener('close', () => { if (signedIn && socket === connection) reconnect = setTimeout(connectSocket, 2000); });
 }
 
 
 async function api<P extends string>(path: P, body?: unknown): Promise<APIResult<P>> {
+  const generation = authGeneration;
   if (body !== undefined) mutations++;
   try {
   const response = await fetch(path, body === undefined ? {} : {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf }, body: JSON.stringify(body),
   });
+  if (generation !== authGeneration) throw new Error('Session changed. Try again.');
   if (response.status === 204) return null as unknown as APIResult<P>;
   const result = await response.json();
+  if (generation !== authGeneration) throw new Error('Session changed. Try again.');
   if (!response.ok) {
     if (response.status === 401 && path !== '/api/login') showLogin();
-    throw new Error(result.error || 'Something went wrong.');
+    throw Object.assign(new Error(result.error || 'Something went wrong.'), { status: response.status });
   }
   return result;
   } finally { if (body !== undefined) mutations--; }
@@ -96,14 +100,27 @@ async function refresh() {
   const state = await api(`/api/state?chat=${encodeURIComponent(requestedChat)}`);
   if (state && requestedChat === chatId) render(state);
 }
-function showLogin() { finances.reset(); cancelQueueEdit(); notifications.reset(); window.resetPreviews(true); signedIn = false; pendingUI = undefined; drafts.clear(); draftMessages.clear(); $('#message').value = ''; try { sessionStorage.removeItem('phoenix-drafts'); } catch { /* Storage may be disabled. */ } window.stopVoice?.(); document.querySelectorAll<HTMLDialogElement>('dialog[open]').forEach(dialog => dialog.close()); closeChats(); signedIn = false; clearTimeout(reconnect); socket?.close(); $('#login').hidden = false; $('#app').hidden = true; }
-function showApp() { signedIn = true; finances.resume().catch(() => {}); connectSocket(); revision = -1; $('#login').hidden = true; $('#app').hidden = false; renderDrafts(); sizeComposer(); refresh().catch(error => { $('#agent-error').textContent = error.message; }); poll(); }
+function showLogin() {
+  authGeneration++; signedIn = false; latest = undefined; pendingUI = undefined;
+  finances.reset(); cancelQueueEdit(); notifications.reset(); window.resetPreviews(true);
+  drafts.clear(); draftMessages.clear(); $('#message').value = ''; $('#messages').replaceChildren();
+  try { sessionStorage.removeItem('phoenix-drafts'); } catch { /* Storage may be disabled. */ }
+  window.stopVoice?.(); document.querySelectorAll<HTMLDialogElement>('dialog[open]').forEach(dialog => dialog.close());
+  closeChats(); clearTimeout(reconnect); socket?.close(); $('#login').hidden = false; $('#app').hidden = true;
+}
+function showApp() {
+  authGeneration++; signedIn = true; revision = -1;
+  finances.resume().catch(() => {}); connectSocket(); $('#login').hidden = true; $('#app').hidden = false;
+  renderDrafts(); sizeComposer(); refresh().catch(error => { $('#agent-error').textContent = error.message; }); poll();
+}
 let promptBaseline = '';
 async function openSettings() {
+  const generation = authGeneration;
   closeChats();
   $('#settings-model').textContent = latest ? `${latest.model.provider === 'opencode-go' ? 'OpenCode Go' : 'OpenCode Zen'} · ${latest.model.id}` : '';
   $('#settings-dialog').showModal();
   await finances.refresh();
+  if (generation !== authGeneration) return;
   try { $('#system-prompt').value = promptBaseline = (await api('/api/workspace/file?path=AGENTS.md')).text || ''; $('#prompt-status').textContent = ''; }
   catch (caught) { const error = caught instanceof Error ? caught : new Error(String(caught)); $('#prompt-status').textContent = error.message; }
 }

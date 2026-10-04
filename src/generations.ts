@@ -61,16 +61,22 @@ export class Generations {
     const target = id === undefined ? history.generations.filter(item => item.id < (history.generations.find(item => item.current)?.id ?? Infinity)).at(-1)?.id : id;
     if (!Number.isInteger(target) || !history.generations.some(item => item.id === target)) throw Object.assign(new Error('Choose an existing generation.'), { status: 400 });
     let backup;
-    if (restore) {
-      const temporary = `${this.app}.${randomUUID()}.tmp`;
-      await cp(await realpath(`${this.profile}-${target}-link`), temporary, { recursive: true });
-      await makeWritable(temporary);
-      const folder = this.folders.length === 1 ? `${this.profile}-backups` : join(this.app, '..', '.phoenix-before-rollback'); await mkdir(folder, { recursive: true });
-      backup = join(folder, randomUUID());
-      await rename(this.app, backup); await rename(temporary, this.app);
+    const temporary = `${this.app}.${randomUUID()}.tmp`;
+    try {
+      if (restore) {
+        await cp(await realpath(`${this.profile}-${target}-link`), temporary, { recursive: true, verbatimSymlinks: true });
+        await makeWritable(temporary);
+        const folder = this.folders.length === 1 ? `${this.profile}-backups` : join(this.app, '..', '.phoenix-before-rollback'); await mkdir(folder, { recursive: true });
+        const candidate = join(folder, randomUUID());
+        await rename(this.app, candidate); backup = candidate;
+        await rename(temporary, this.app);
+      }
+      await run('nix-env', ['--profile', this.profile, '--switch-generation', String(target)]);
+    } catch (caught) {
+      const error = errorOf(caught); if (backup) { await rm(this.app, { recursive: true, force: true }); await rename(backup, this.app); } throw error;
+    } finally {
+      if (restore) await rm(temporary, { recursive: true, force: true });
     }
-    try { await run('nix-env', ['--profile', this.profile, '--switch-generation', String(target)]); }
-    catch (caught) { const error = errorOf(caught); if (backup) { await rm(this.app, { recursive: true, force: true }); await rename(backup, this.app); } throw error; }
     return this.history();
   }
   async markWorking(id: number) {

@@ -17,46 +17,68 @@ window.initPlaid = ({ api }: { api: API }) => {
   let busy = false;
   let pendingSave: { token: string; publicToken?: string; name: string } | undefined;
   let controllerGeneration = 0;
+  let status: PlaidStatus | undefined;
+  let credentialsEdited = false;
+  form.addEventListener('input', () => { credentialsEdited = true; });
   const message = (error: unknown) => { errorText.textContent = error instanceof Error ? error.message : 'Could not connect Plaid.'; };
-  const render = (status: PlaidStatus) => {
+  const controls = () => {
+    const locked = busy || !!pendingSave;
+    connect.disabled = locked;
+    form.querySelector<HTMLButtonElement>('button')!.disabled = locked;
+    clientId.disabled = environment.disabled = locked || !!status?.items.length;
+    secret.disabled = locked;
+    for (const button of get('plaid-items').querySelectorAll<HTMLButtonElement>('button')) button.disabled = locked;
+    retry.disabled = busy;
+  };
+  const render = (next: PlaidStatus) => {
+    status = next;
     settings.hidden = false;
     get('plaid-status').textContent = `${status.environment === 'sandbox' ? 'Sandbox · test banks' : 'Production · real banks'}${status.configured ? ` · ${status.items.length} connected` : ' · Not configured'}`;
-    form.hidden = status.managedByEnvironment; clientId.disabled = environment.disabled = status.items.length > 0;
-    if (!status.items.length) environment.value = status.environment;
-    clientId.value = status.clientId || ''; clientId.required = !status.items.length;
-    connect.hidden = !status.configured; connect.disabled = busy || !!pendingSave;
+    form.hidden = status.managedByEnvironment;
+    if (!credentialsEdited) { environment.value = status.environment; clientId.value = status.clientId || ''; }
+    clientId.required = !status.items.length;
+    connect.hidden = !status.configured;
     const items = get('plaid-items'); items.replaceChildren();
     for (const item of status.items) {
       const row = document.createElement('div'); row.className = 'plaid-item';
       const name = document.createElement('span'); name.textContent = item.name; row.append(name);
       for (const action of ['Reconnect', 'Disconnect']) {
-        const button = document.createElement('button'); button.type = 'button'; button.textContent = action; button.disabled = busy;
+        const button = document.createElement('button'); button.type = 'button'; button.textContent = action;
         button.addEventListener('click', async () => {
-          if (busy) return;
+          if (busy || pendingSave) return;
+          const generation = controllerGeneration;
           if (action === 'Disconnect') {
             if (!confirm(`Disconnect ${item.name} from Phoenix?`)) return;
-            busy = true; button.disabled = true; errorText.textContent = '';
-            try { render(await api('/api/plaid/disconnect', { itemId: item.id })); }
-            catch (error) { message(error); } finally { busy = false; await refresh(); }
+            busy = true; controls(); errorText.textContent = '';
+            try { const next = await api('/api/plaid/disconnect', { itemId: item.id }); if (generation === controllerGeneration) render(next); }
+            catch (error) { if (generation === controllerGeneration) message(error); }
+            finally { if (generation === controllerGeneration) { busy = false; controls(); } }
           } else await open(item.id);
         }); row.append(button);
       }
       items.append(row);
     }
+    controls();
   };
   const refresh = async () => {
-    try { render(await api('/api/plaid/status')); }
-    catch (error) { settings.hidden = true; message(error); }
+    const generation = controllerGeneration;
+    try { const next = await api('/api/plaid/status'); if (generation === controllerGeneration) render(next); }
+    catch (error) { if (generation === controllerGeneration) { settings.hidden = !status; message(error); } }
   };
   const clearPending = () => { try { sessionStorage.removeItem('phoenix-plaid-link'); } catch { /* Storage can be disabled. */ } };
   const finish = async () => {
-    if (!pendingSave) return;
-    retry.disabled = true;
+    if (!pendingSave || busy) return;
+    const generation = controllerGeneration; busy = true; controls();
     try {
       const status = await api('/api/plaid/complete', pendingSave);
+      if (generation !== controllerGeneration) return;
       pendingSave = undefined; retry.hidden = true; errorText.textContent = ''; render(status);
-    } catch (error) { message(error); retry.hidden = false; }
-    finally { retry.disabled = false; }
+    } catch (error) {
+      if (generation !== controllerGeneration) return;
+      // Expired or invalid flows need a new sign-in; network failures can retry.
+      if (error instanceof Error && 'status' in error && error.status === 400) pendingSave = undefined;
+      message(error); retry.hidden = !pendingSave;
+    } finally { if (generation === controllerGeneration) { busy = false; controls(); } }
   };
   const load = () => {
     if (window.Plaid) return Promise.resolve();
@@ -76,12 +98,12 @@ window.initPlaid = ({ api }: { api: API }) => {
       onSuccess: async (publicToken, metadata) => {
         if (generation !== controllerGeneration) return;
         clearPending(); pendingSave = { token: link.token, ...(!link.itemId && publicToken ? { publicToken } : {}), name: metadata.institution?.name || 'Connected bank' };
-        handler?.destroy(); handler = undefined; busy = false;
-        if (!dialog.open) dialog.showModal(); settings.open = true; await finish(); await refresh();
+        handler?.destroy(); handler = undefined; busy = false; controls();
+        if (!dialog.open) dialog.showModal(); settings.open = true; await finish();
       },
       onExit: error => {
         if (generation !== controllerGeneration) return;
-        clearPending(); handler?.destroy(); handler = undefined; busy = false;
+        clearPending(); handler?.destroy(); handler = undefined; busy = false; controls();
         if (!dialog.open) dialog.showModal(); settings.open = true;
         if (error) errorText.textContent = 'Bank sign-in did not finish. Try again.';
         refresh().catch(() => {});
@@ -93,24 +115,26 @@ window.initPlaid = ({ api }: { api: API }) => {
   };
   const open = async (itemId?: string) => {
     if (busy || pendingSave) return;
-    const generation = controllerGeneration; busy = true; connect.disabled = true; errorText.textContent = '';
+    const generation = controllerGeneration; busy = true; controls(); errorText.textContent = '';
     try {
       await load(); if (generation !== controllerGeneration) return;
       const link = await api('/api/plaid/link', itemId ? { itemId } : {}); if (generation !== controllerGeneration) return;
       try { sessionStorage.setItem('phoenix-plaid-link', JSON.stringify(link)); } catch { /* Popup linking still works without storage. */ }
       await start(link);
-    } catch (error) { busy = false; clearPending(); message(error); await refresh(); }
+    } catch (error) { if (generation === controllerGeneration) { busy = false; controls(); clearPending(); message(error); } }
   };
   form.addEventListener('submit', async event => {
-    event.preventDefault(); if (busy) return;
-    busy = true; errorText.textContent = ''; const button = form.querySelector<HTMLButtonElement>('button')!; button.disabled = true;
+    event.preventDefault(); if (busy || pendingSave) return;
+    const generation = controllerGeneration; busy = true; controls(); errorText.textContent = '';
     try {
       // The client ID is retained in this form only; secrets are always cleared.
-      render(await api('/api/plaid/configure', { clientId: clientId.value, secret: secret.value, environment: environment.value }));
-    } catch (error) { message(error); } finally { secret.value = ''; busy = false; button.disabled = false; await refresh(); }
+      const next = await api('/api/plaid/configure', { clientId: clientId.value, secret: secret.value, environment: environment.value });
+      if (generation === controllerGeneration) { credentialsEdited = false; render(next); }
+    } catch (error) { if (generation === controllerGeneration) message(error); }
+    finally { if (generation === controllerGeneration) { secret.value = ''; busy = false; controls(); } }
   });
   connect.addEventListener('click', () => { open().catch(message); });
-  retry.addEventListener('click', () => { finish().then(refresh).catch(message); });
+  retry.addEventListener('click', () => { finish().catch(message); });
   const resume = async () => {
     if (!new URL(location.href).searchParams.has('oauth_state_id')) return;
     const receivedRedirectUri = location.href; history.replaceState(null, '', location.pathname);
@@ -120,8 +144,8 @@ window.initPlaid = ({ api }: { api: API }) => {
     if (!link || typeof link.token !== 'string' || link.token.length > 300 || !Number.isFinite(Date.parse(link.expiresAt)) || Date.parse(link.expiresAt) <= Date.now()) {
       clearPending(); message(Error('This bank sign-in expired. Connect again.')); return;
     }
-    busy = true;
-    try { await start(link, receivedRedirectUri); } catch (error) { busy = false; message(error); }
+    const generation = controllerGeneration; busy = true; controls();
+    try { await start(link, receivedRedirectUri); } catch (error) { if (generation === controllerGeneration) { busy = false; controls(); message(error); } }
   };
-  return { refresh, resume, active: () => busy || !!pendingSave, reset: () => { controllerGeneration++; busy = false; handler?.destroy(); handler = undefined; pendingSave = undefined; retry.hidden = true; secret.value = clientId.value = ''; clearPending(); get('plaid-items').replaceChildren(); } };
+  return { refresh, resume, active: () => busy || !!pendingSave, reset: () => { controllerGeneration++; busy = false; handler?.destroy(); handler = undefined; pendingSave = undefined; status = undefined; credentialsEdited = false; retry.hidden = true; secret.value = clientId.value = ''; errorText.textContent = ''; clearPending(); get('plaid-items').replaceChildren(); settings.hidden = true; controls(); } };
 };

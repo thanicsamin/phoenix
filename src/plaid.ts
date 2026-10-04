@@ -117,6 +117,9 @@ export class Plaid {
     try {
       for (;;) { const { value, done } = await reader.read(); if (done) break; size += value.byteLength;
         if (size > 2 * 1024 * 1024) { await reader.cancel(); throw fail('Plaid response was too large. Request a smaller page.', 502); } chunks.push(value); }
+    } catch (error) {
+      if (error instanceof Error && 'status' in error && error.status === 502) throw error;
+      throw fail('Plaid request was interrupted or timed out. Try again.', 502);
     } finally { reader.releaseLock(); }
     let data: unknown;
     try { data = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw fail('Plaid returned an invalid response.', 502); }
@@ -154,6 +157,7 @@ export class Plaid {
       if (this.completed.has(token)) return this.status();
       const link = this.links.get(token); if (!link || link.expires <= Date.now()) throw fail('This bank connection expired or the server restarted. Connect again.');
       if (!link.itemId) {
+        if (this.vault.items.length >= 20) throw fail('Disconnect a bank before adding another.');
         if (!publicToken) throw fail('Plaid did not supply a public token.'); registerSecret(publicToken);
         const result = await this.call('/item/public_token/exchange', { public_token: publicToken }, z.object({ access_token: z.string(), item_id: z.string() })); registerSecret(result.access_token);
         if (this.vault.items.some(item => item.id === result.item_id)) throw fail('This bank is already connected.');

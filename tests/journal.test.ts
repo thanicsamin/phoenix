@@ -51,3 +51,14 @@ test('journal paths cannot follow links outside the workspace', async t => {
   const { root, journal } = await fixture(t); const outside = await mkdtemp(join(tmpdir(), 'phoenix-journal-outside-')); t.after(() => rm(outside, { recursive: true, force: true }));
   await symlink(outside, join(root, 'memory')); await assert.rejects(journal.note('Must stay inside.'), /inside the workspace/);
 });
+
+test('recent daily corrections take priority over old summaries within the context budget', async t => {
+  const { journal } = await fixture(t);
+  await journal.note('A direct correction.', new Date('2026-10-04T12:00:00Z'));
+  await journal.summarize('all', 'Old general summary: ' + 'a'.repeat(2880));
+  await journal.summarize('2026', 'Older yearly summary: ' + 'b'.repeat(780));
+  await journal.summarize('2026-10-04', 'Newest daily correction: ' + 'c'.repeat(580));
+  const context = await journal.context();
+  assert.match(context, /Newest daily correction/); assert.match(context, /A direct correction/);
+  assert.ok(context.length < 9000);
+});
