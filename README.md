@@ -236,6 +236,17 @@ keep it above other side chats. Chats sort by your last sent message, including
 queued messages; agent replies and scheduled jobs do not move them around.
 Pins and message order persist across restarts.
 
+Memory defaults to a disk-backed journal for each chat. The `memory` tool appends
+short notes, searches the original records, pages through older notes and saves
+day → month → year summaries. Phoenix loads a bounded selection into the prompt;
+missing summaries never prevent work. Summaries are optional model-maintained
+caches, and the original notes remain on disk. There are no embeddings, background
+model calls or memory database. Journal files and summaries are visible in
+**Files → memory → chats**. Shared `USER.md`, `MEMORY.md` and existing daily notes
+continue to work. External email/channel runs cannot access the private memory
+tool. This is an original implementation inspired by
+[OptMem](https://github.com/VictorTaelin/OptMem); it includes none of that project's code.
+
 Enable browser notifications in **Settings** for replies, failures and approvals
 in background chats. Notification bodies do not include private message text.
 The page must remain open and connected; there is no push service or closed-tab
