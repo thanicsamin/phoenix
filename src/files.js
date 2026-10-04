@@ -18,6 +18,13 @@ export class Files {
     catch (error) { if (error.code !== 'ENOENT') throw error; }
     if (!Array.isArray(this.items) || this.items.some(item => !/^[0-9a-f-]{36}$/.test(item.id)
       || !/^(main|[0-9a-f-]{36})$/.test(item.chatId) || typeof item.name !== 'string' || ['.', '..'].includes(item.name) || item.name.includes('\0') || item.name.includes('/') || item.name.includes('\\'))) throw new Error('Invalid attachment metadata.');
+    // Older versions stored PDFs as generic downloads. Verify the signature,
+    // rather than trusting a user-controlled file extension or upload MIME.
+    for (const file of this.items.filter(file => file.mime === 'application/octet-stream' && /\.pdf$/i.test(file.name))) {
+      const handle = await open(this.path(file), 'r');
+      try { const data = Buffer.alloc(5); await handle.read(data, 0, 5, 0); if (data.toString() === '%PDF-') file.mime = 'application/pdf'; }
+      finally { await handle.close(); }
+    }
   }
   save() {
     const body = JSON.stringify(this.items);
@@ -51,8 +58,10 @@ export class Files {
         await handle.writeFile(chunk);
       }
       await handle.close(); handle = undefined;
-      const data = await readFile(join(folder, name));
-      const file = { id, chatId, name, size, mime: imageType(data) || 'application/octet-stream', role, used: role === 'assistant' };
+      const signature = await open(join(folder, name), 'r'); const data = Buffer.alloc(12);
+      try { await signature.read(data, 0, data.length, 0); }
+      finally { await signature.close(); }
+      const file = { id, chatId, name, size, mime: imageType(data) || (data.subarray(0, 5).toString() === '%PDF-' ? 'application/pdf' : 'application/octet-stream'), role, used: role === 'assistant' };
       const inputFolder = join(this.workspace, 'uploads', chatId, id);
       await mkdir(inputFolder, { recursive: true, mode: 0o700 });
       await copyFile(this.path(file), join(inputFolder, name));

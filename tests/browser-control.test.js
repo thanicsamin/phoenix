@@ -53,6 +53,30 @@ test('takeover aborts active work before opening the page and resumes only on ex
   assert.match(events[3], /Continue the previous task/); await control.close();
 });
 
+test('viewing preserves active work and viewport; takeover and handback keep the live viewer connected', async () => {
+  const { host, control, socket, page, cleared } = fixture(); let aborted = 0;
+  host.loaded.set('main', { pending: 1, session: { abort: async () => aborted++, waitForIdle: async () => {} } });
+  await control.view(socket);
+  assert.equal(aborted, 0); assert.equal(control.controlled, false);
+  assert.deepEqual(page.viewportSize(), { width: 800, height: 600 });
+  assert.throws(() => control.input(socket, { type: 'text', text: 'ignored' }), /control has ended/);
+  await control.claim(socket, 400, 700); assert.equal(aborted, 1);
+  assert.deepEqual(page.viewportSize(), { width: 400, height: 700 });
+  host.loaded.get('main').pending = 0; host.loaded.get('main').submit = async () => {};
+  await control.release(); assert.equal(cleared(), 1);
+  assert.equal(control.controlled, false); assert.equal(control.socket, socket); assert.ok(control.cdp);
+  await control.claim(socket, 400, 700); assert.equal(control.controlled, true);
+  await control.close();
+});
+
+test('failed secret cleanup leaves browser paused and viewer connected', async () => {
+  const { control, socket } = fixture(); await control.claim(socket, 800, 600);
+  control.browser.clearSecrets = async () => { throw Error('Private failure'); };
+  await assert.rejects(control.release(), /Could not clear login fields/);
+  assert.equal(control.controlled, true); assert.equal(control.socket, socket); assert.equal(control.releasing, false);
+  await control.close();
+});
+
 test('Stop cancels messages waiting on human control without unlocking the browser', async () => {
   const { control, socket } = fixture(); await control.claim(socket, 800, 600);
   const chat = new Chat({}, '/tmp', '/tmp'); chat.browserControl = control;
@@ -66,8 +90,9 @@ test('browser socket rejects missing auth, foreign origins, preview sessions and
   const directory = await mkdtemp(join(tmpdir(), 'phoenix-browser-socket-'));
   const host = { ...fixture().host, auth: await createAuth(directory, { password: 'browser-socket-password' }), cleanups: [],
     record: id => { if (id !== 'main') throw Error('Unknown chat'); }, getChat: async id => { if (id !== 'main') throw Error('Unknown chat'); } };
-  let claims = 0; let releases = 0; const inputs = [];
-  host.browserControls = new Map([['main', { claim: async socket => { claims++; socket.send(JSON.stringify({ type: 'ready' })); }, input: async (_socket, data) => inputs.push(data), disconnect: async () => {}, release: async () => { releases++; } }]]);
+  let claims = 0; let views = 0; let releases = 0; const inputs = [];
+  const control = { controlled: false, view: async socket => { views++; control.socket = socket; socket.send(JSON.stringify({ type: 'ready', controlled: false })); }, claim: async socket => { claims++; control.controlled = true; socket.send(JSON.stringify({ type: 'ready', controlled: true })); }, input: async (_socket, data) => { if (!control.controlled) throw Error('View only'); inputs.push(data); }, disconnect: async () => {}, release: async () => { releases++; } };
+  host.browserControls = new Map([['main', control]]);
   const server = createWebServer(host); server.listen(0, '127.0.0.1'); await once(server, 'listening'); host.port = server.address().port;
   t.after(async () => { for (const cleanup of host.cleanups) await cleanup(); server.closeWebSockets(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await rm(directory, { recursive: true, force: true }); });
   const origin = `http://127.0.0.1:${host.port}`; const url = `ws://127.0.0.1:${host.port}/api/browser/socket`;
@@ -89,7 +114,11 @@ test('browser socket rejects missing auth, foreign origins, preview sessions and
   }
   assert.equal(claims, 0);
   const socket = await open(); const ready = once(socket, 'message'); socket.send(JSON.stringify({ type: 'start', chatId: 'main', csrf: auth.csrf, width: 800, height: 600 }));
-  assert.equal(JSON.parse((await ready)[0]).type, 'ready'); assert.equal(claims, 1);
+  assert.equal(JSON.parse((await ready)[0]).controlled, false); assert.equal(claims, 0); assert.equal(views, 1);
+  const deniedInput = once(socket, 'message'); socket.send(JSON.stringify({ type: 'text', text: 'must-not-type' }));
+  assert.equal(JSON.parse((await deniedInput)[0]).type, 'error'); assert.equal(inputs.length, 0);
+  const taken = once(socket, 'message'); socket.send(JSON.stringify({ type: 'take' }));
+  assert.equal(JSON.parse((await taken)[0]).controlled, true); assert.equal(claims, 1);
   socket.send(JSON.stringify({ type: 'text', text: 'private-login-input' })); await new Promise(resolve => setTimeout(resolve, 20));
   assert.equal(inputs[0].text, 'private-login-input');
   host.auth.logout(auth.token); const closed = once(socket, 'close'); socket.send(JSON.stringify({ type: 'key', key: 'Enter' })); assert.equal((await closed)[0], 1008);

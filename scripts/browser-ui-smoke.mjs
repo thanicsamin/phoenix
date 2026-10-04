@@ -42,7 +42,7 @@ try {
   const chat = await api('/api/new', { title: `Browser UI QA ${Date.now()}` }); chatId = chat.id;
   await page.getByRole('button', { name: chat.title, exact: true }).click();
   const before = await state(); assert.equal(before.model.id, 'space-bunny-free');
-  await api('/api/prompt', { chatId, message: 'Use the browser tool to navigate http://127.0.0.1:18086/verify. This is a local CAPTCHA test fixture. Execute exactly THREE separate browser click calls on #verify AFTER navigating, as the owner policy permits. The tool wording "3 of 3" describes the NEXT click, not completed clicks; navigation and inspection do not count. After the third click, wait for owner approval. After approval, click #verify once more and report the result. Do not use bash or read fixture source.' });
+  await api('/api/prompt', { chatId, message: 'Use the browser tool to navigate http://127.0.0.1:18086/verify. This is a local CAPTCHA test fixture. Execute exactly THREE separate browser click calls on #verify AFTER navigating, as the owner policy permits. Navigation and inspection do not count as CAPTCHA interactions. After the third click, wait for owner approval. After approval, click #verify once more and report the result. Do not use bash or read fixture source.' });
   await page.getByRole('button', { name: 'Try CAPTCHA', exact: true }).waitFor({ state: 'visible', timeout: 120000 });
   await mkdir('/data/ui-checks', { recursive: true }); await page.screenshot({ path: '/data/ui-checks/captcha-approval.png' });
   await page.getByRole('button', { name: 'Try CAPTCHA', exact: true }).click();
@@ -51,7 +51,7 @@ try {
   await api('/api/prompt', { chatId, message: 'I approved the new attempt using the Try CAPTCHA button. Click #verify exactly once now and report the heading. Do not navigate or start another batch.' });
   const completed = await until(state, value => !value.busy, 'Model did not finish the approved CAPTCHA attempt');
   assert.ok(!completed.error, completed.error); assert.match(completed.messages.filter(item => item.role === 'assistant').at(-1).text, /verified|success|complete|passed/i);
-  await api('/api/prompt', { chatId, message: 'Navigate http://127.0.0.1:18086/verify with the browser. Execute exactly THREE separate browser click calls on #verify AFTER navigating; "3 of 3" describes the NEXT click, not completed clicks. Then wait for owner permission if still blocked. I may take control to sign in to another fixture page. After I return control, inspect the current page and report its heading without navigating anywhere. Do not use bash or read fixture source.' });
+  await api('/api/prompt', { chatId, message: 'Navigate http://127.0.0.1:18086/verify with the browser. Execute exactly THREE separate browser click calls on #verify AFTER navigating; navigation and inspection do not count. Then wait for owner permission if still blocked. I may take control to sign in to another fixture page. After I return control, inspect the current page and report its heading without navigating anywhere. Do not use bash or read fixture source.' });
   await page.getByRole('button', { name: 'Take control', exact: true }).waitFor({ state: 'visible', timeout: 120000 });
   await page.getByRole('button', { name: 'Take control', exact: true }).click();
   await page.getByText('You’re in control', { exact: true }).waitFor({ state: 'visible', timeout: 30000 });
@@ -76,6 +76,8 @@ try {
   await page.getByRole('button', { name: 'Resume browser', exact: true }).click();
   await page.getByText('You’re in control', { exact: true }).waitFor({ state: 'visible', timeout: 30000 });
   await page.getByRole('button', { name: 'Return to agent', exact: true }).click();
+  await page.getByText('Watching · Agent in control', { exact: true }).waitFor({ state: 'visible' });
+  await page.getByRole('button', { name: 'Close browser view', exact: true }).click();
   await until(state, value => !value.browser.controlled && !value.busy && value.messages.some(item => /Account ready/.test(item.text)), 'Handback did not resume the model on the signed-in page');
   assert.ok(!JSON.stringify(await state()).includes(password), 'Fixture password reached the chat history');
   assert.deepEqual(errors, []);

@@ -13,3 +13,4 @@ await import('./browser-smoke.mjs');
 await import('./browser-control-smoke.mjs');
 await import('./generations-smoke.mjs');
 await import('./ui-generations-smoke.mjs');
+await import('./ergonomics-ui-smoke.mjs');

@@ -10,7 +10,7 @@ export default function permissions(pi, host, _options, chatId = 'main') {
     if (externalWrite && event.toolName === 'browser' && await host.browserControls?.get(chatId)?.verificationAllowed?.()) return;
     const emailTriggered = chat.source === 'Incoming email';
     const safeEmailRead = event.toolName === 'email_read'
-      || (event.toolName === 'browser' && ['navigate', 'snapshot', 'screenshot', 'resize'].includes(event.input.action));
+      || (event.toolName === 'browser' && ['navigate', 'snapshot', 'screenshot', 'resize', 'wait'].includes(event.input.action));
     if (!externalWrite && (!emailTriggered || safeEmailRead)) return;
     const approved = await host.requestApproval(chatId, event.toolName, event.input);
     if (!approved) return { block: true, reason: 'The owner did not approve this action. Keep the work as a draft and report it in chat.' };

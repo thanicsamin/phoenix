@@ -10,10 +10,21 @@ markdown.renderer.rules.link_open = (tokens, index, options, _env, renderer) => 
   tokens[index].attrSet('rel', 'noopener noreferrer');
   return renderer.renderToken(tokens, index, options);
 };
-// Link images without fetching remote resources from untrusted messages.
+// Raw HTML stays disabled. Only HTTPS images and authenticated attachment
+// images are embedded; arbitrary same-origin endpoints and data URLs aren't.
 markdown.renderer.rules.image = (tokens, index) => {
   const token = tokens[index];
-  return `<a href="${markdown.utils.escapeHtml(token.attrGet('src'))}" target="_blank" rel="noopener noreferrer">${markdown.utils.escapeHtml(token.content || 'Image')}</a>`;
+  const src = token.attrGet('src') || '';
+  const escape = markdown.utils.escapeHtml;
+  let allowed = false;
+  try {
+    const url = new URL(src, 'https://phoenix.invalid');
+    allowed = !url.username && !url.password && (url.origin === 'https://phoenix.invalid'
+      ? url.pathname === '/api/files/image' && /^(main|[0-9a-f-]{36})$/.test(url.searchParams.get('chat')) && /^[0-9a-f-]{36}$/.test(url.searchParams.get('id'))
+      : url.protocol === 'https:');
+  } catch { /* Invalid image links remain text. */ }
+  const alt = escape(token.content || 'Image');
+  return allowed ? `<a href="${escape(src)}" target="_blank" rel="noopener noreferrer"><img src="${escape(src)}" alt="${alt}" loading="lazy" decoding="async" referrerpolicy="no-referrer"></a>` : alt;
 };
 
 window.renderMarkdown = text => {

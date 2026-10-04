@@ -33,6 +33,30 @@ test('queue bounds and validation prevent unbounded work', async () => {
   host.pending = 0; host.closing = true;
   await assert.rejects(host.submit('hi'), /shutting down/);
 });
+
+test('queued edits change the actual delivered text and images, and reject stale or already-started edits', async () => {
+  const chat = new Host({}, '/tmp', '/tmp'); let release; const calls = [];
+  chat.attach({ messages: [], subscribe: () => () => {}, waitForIdle: async () => {}, prompt: async (text, options) => {
+    calls.push({ text, images: options.images }); if (text === 'first') await new Promise(resolve => { release = resolve; });
+  } });
+  const first = chat.submit('first'); await new Promise(resolve => setImmediate(resolve));
+  const second = chat.submit('original', 'web', [{ type: 'image', data: 'old' }]);
+  const queued = chat.queued[0]; assert.equal(queued.message, 'original');
+  const edit = chat.editable(queued.id, 0); edit.message = 'edited'; edit.images = [{ type: 'image', data: 'new' }]; edit.version++;
+  assert.throws(() => chat.editable(queued.id, 0), /another window/);
+  release(); await first; await second; await chat.queue;
+  assert.deepEqual(calls, [{ text: 'first', images: [] }, { text: 'edited', images: [{ type: 'image', data: 'new' }] }]);
+  assert.throws(() => chat.editable(queued.id, 1), /already started/);
+});
+
+test('attachment preparation cannot overwrite a message that starts while an edit is waiting', async () => {
+  const { Host: Agent } = await import('../src/host.js');
+  const chat = new Host({}, '/tmp', '/tmp'); chat.session = { model: {} };
+  const queued = { id: 'queue-id', source: 'web', version: 0, message: 'original' }; chat.queued.push(queued);
+  const host = Object.assign(Object.create(Agent.prototype), { getChat: async () => chat, files: { prepare: async () => { chat.queued = []; return { message: 'late edit', images: [] }; } } });
+  await assert.rejects(host.editQueued('main', queued.id, 0, 'edited'), /already started/);
+  assert.equal(queued.message, 'original');
+});
 test('send tools enforce recipient allowlists', async () => {
   let tool; const sent = [];
   sendTool({ registerTool: definition => { tool = definition; } }, 'telegram', ['123'], async (...args) => sent.push(args));
@@ -119,4 +143,24 @@ test('archiving is reversible and persistent without changing jobs, permissions 
   await assert.rejects(reopened.archiveChat(undefined, true), /Choose whether/);
   await assert.rejects(reopened.archiveChat(side.id, 'true'), /Choose whether/);
   await assert.rejects(reopened.archiveChat('missing', true), /Chat not found/); await reopened.close();
+});
+
+test('chat pins and owner-message order persist; scheduled replies do not reorder chats', async t => {
+  const { Host: Agent } = await import('../src/host.js'); const { loadConfig } = await import('../src/config.js');
+  const { mkdtemp, rm } = await import('node:fs/promises'); const { join } = await import('node:path'); const { tmpdir } = await import('node:os');
+  const directory = await mkdtemp(join(tmpdir(), 'phoenix-pins-')); t.after(() => rm(directory, { recursive: true, force: true }));
+  const config = await loadConfig('agent.json'); let host = new Agent(config, directory, directory); await host.initialize();
+  const session = { messages: [], model: {}, modelRuntime: { hasConfiguredAuth: () => true }, subscribe: () => () => {}, bindExtensions: async () => {}, prompt: async () => {}, waitForIdle: async () => {}, abort: async () => {}, dispose() {} };
+  host.createSession = async () => session;
+  const first = await host.createChat('First'); const second = await host.createChat('Second');
+  await host.submit('Hello second', 'web', second.id); await host.submit('Hello first', 'web', first.id);
+  const ids = async () => (await host.state()).chats.map(chat => chat.id);
+  assert.deepEqual(await ids(), ['main', first.id, second.id]);
+  await host.submit('Scheduled work', 'Scheduled task: Check', second.id); assert.deepEqual(await ids(), ['main', first.id, second.id]);
+  await host.pinChat(second.id, true); assert.deepEqual(await ids(), ['main', second.id, first.id]);
+  await host.close(); host = new Agent(config, directory, directory); await host.initialize(); host.createSession = async () => session;
+  assert.equal(host.record(second.id).pinned, true); assert.deepEqual(await ids(), ['main', second.id, first.id]);
+  await host.pinChat(second.id, false); assert.deepEqual(await ids(), ['main', first.id, second.id]);
+  await assert.rejects(host.pinChat('main', false), /already stays/); await assert.rejects(host.pinChat(first.id, 'true'), /Choose whether/);
+  await host.close();
 });

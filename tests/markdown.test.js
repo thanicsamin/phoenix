@@ -8,7 +8,7 @@ import texmath from 'markdown-it-texmath';
 
 // Check the actual browser renderer's parsing; Chromium smoke tests cover sanitization.
 const window = { markdownit, katex, DOMPurify: { sanitize: html => html } };
-runInNewContext(await readFile('web/markdown.js', 'utf8'), { window, texmath });
+runInNewContext(await readFile('web/markdown.js', 'utf8'), { window, texmath, URL });
 const render = window.renderMarkdown;
 
 test('Markdown renders tables, links, headings and code while escaping raw HTML', () => {
@@ -31,4 +31,12 @@ test('LaTeX accepts dollar and bracket delimiters, preserves code and prices, an
   assert.doesNotMatch(render('$\\includegraphics{https://example.com/track}$'), /<img/);
   assert.doesNotThrow(() => render('Streaming $\\frac{1}'));
   assert.doesNotThrow(() => render('$\\notacommand$'));
+});
+
+test('answers embed safe HTTPS or authenticated attachment images while excluding executable and arbitrary local URLs', () => {
+  assert.match(render('![Bird](https://example.com/bird.png)'), /<img src="https:\/\/example.com\/bird.png"[^>]+referrerpolicy="no-referrer"/);
+  assert.match(render('![Image](/api/files/image?chat=main&id=11111111-1111-1111-1111-111111111111)'), /<img/);
+  for (const src of ['/api/setup', '/api/workspace/download?path=USER.md', 'http://example.com/x', 'data:image/svg+xml;base64,AAAA', 'javascript:alert(1)', 'https://user:password@example.com/x']) {
+    assert.doesNotMatch(render(`![Bad](${src})`), /<img/);
+  }
 });

@@ -18,6 +18,9 @@ const files = {
   '/theme.js': [new URL('../web/theme.js', import.meta.url), 'text/javascript; charset=utf-8'],
   '/browser.js': [new URL('../web/browser.js', import.meta.url), 'text/javascript; charset=utf-8'],
   '/markdown.js': [new URL('../web/markdown.js', import.meta.url), 'text/javascript; charset=utf-8'],
+  '/notifications.js': [new URL('../web/notifications.js', import.meta.url), 'text/javascript; charset=utf-8'],
+  '/notification-worker.js': [new URL('../web/notification-worker.js', import.meta.url), 'text/javascript; charset=utf-8'],
+  '/previews.js': [new URL('../web/previews.js', import.meta.url), 'text/javascript; charset=utf-8'],
   '/style.css': [new URL('../web/style.css', import.meta.url), 'text/css; charset=utf-8'],
   '/bird.svg': [new URL('../web/bird.svg', import.meta.url), 'image/svg+xml'],
 };
@@ -27,7 +30,13 @@ for (const [url, path, type] of [
   ['/vendor/purify.js', 'dompurify/dist/purify.min.js', 'text/javascript'],
   ['/vendor/katex/katex.min.js', 'katex/dist/katex.min.js', 'text/javascript'],
   ['/vendor/katex/katex.min.css', 'katex/dist/katex.min.css', 'text/css'],
+  ['/vendor/pdfjs/pdf.mjs', 'pdfjs-dist/legacy/build/pdf.min.mjs', 'text/javascript'],
+  ['/vendor/pdfjs/pdf.worker.mjs', 'pdfjs-dist/legacy/build/pdf.worker.min.mjs', 'text/javascript'],
 ]) files[url] = [new URL(`../node_modules/${path}`, import.meta.url), type];
+for (const folder of ['cmaps', 'wasm']) {
+  const root = new URL(`../node_modules/pdfjs-dist/${folder}/`, import.meta.url);
+  for (const name of readdirSync(root).filter(name => /\.(bcmap|wasm)$/.test(name))) files[`/vendor/pdfjs/${folder}/${name}`] = [new URL(name, root), name.endsWith('.wasm') ? 'application/wasm' : 'application/octet-stream'];
+}
 const fonts = new URL('../node_modules/katex/dist/fonts/', import.meta.url);
 for (const name of readdirSync(fonts).filter(name => name.endsWith('.woff2'))) {
   files[`/vendor/katex/fonts/${name}`] = [new URL(name, fonts), 'font/woff2'];
@@ -74,7 +83,7 @@ export function createWebServer(host, logger = log) {
     try {
       const authority = request.headers.host;
       if (!allowedHost(authority)) return send(403, { error: 'Unrecognized host.' });
-      response.setHeader('Content-Security-Policy', `default-src 'self'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws://${authority} wss://${authority}; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`);
+      response.setHeader('Content-Security-Policy', `default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' ws://${authority} wss://${authority}; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`);
       const path = new URL(request.url, `http://${authority}`).pathname;
       if (request.method === 'GET' && path === '/health') return send(200, { ok: true });
       if (request.method === 'GET' && files[path]) {
@@ -118,9 +127,16 @@ export function createWebServer(host, logger = log) {
         if (path === '/api/internet/route') return send(200, await host.internet.toggle((await readBody(request)).enabled));
         if (path === '/api/internet/revoke') { await host.internet.revoke(); return send(200, {}); }
       }
-      if (request.method === 'GET' && path === '/api/files/download') {
+      if (request.method === 'GET' && ['/api/files/download', '/api/files/image'].includes(path)) {
         const chatId = query.get('chat') || 'main'; host.record(chatId);
         const file = host.files.get(query.get('id'), chatId);
+        if (path !== '/api/files/download') {
+          if (path === '/api/files/image' && !file.mime.startsWith('image/')) return send(415, { error: 'Choose an image.' });
+          const preview = { path: host.files.path(file), mime: file.mime };
+          response.setHeader('Content-Type', preview.mime);
+          response.setHeader('Content-Disposition', 'inline');
+          await pipeline(createReadStream(preview.path), response); return;
+        }
         response.setHeader('Content-Type', 'application/octet-stream');
         response.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`);
         response.setHeader('Content-Length', file.size);
@@ -142,6 +158,11 @@ export function createWebServer(host, logger = log) {
         if (auth.preview) return send(403, { error: 'Sign in as the owner to archive chats.' });
         const { chatId, archived } = await readBody(request);
         return send(200, await host.archiveChat(chatId, archived));
+      }
+      if (request.method === 'POST' && path === '/api/chat/pin') {
+        if (auth.preview) return send(403, { error: 'Sign in as the owner to pin chats.' });
+        const { chatId, pinned } = await readBody(request);
+        return send(200, await host.pinChat(chatId, pinned));
       }
       if (request.method === 'POST' && path === '/api/logout') {
         host.auth.logout(token); host.changed?.();
@@ -204,6 +225,12 @@ export function createWebServer(host, logger = log) {
         const { message, chatId = 'main', attachments = [] } = await readBody(request);
         if (typeof message !== 'string' || !Array.isArray(attachments) || (!message.trim() && !attachments.length) || message.length > 32000) return send(400, { error: 'Write a steering message.' });
         await host.steer(message || 'Please inspect the attached files.', chatId, attachments); return send(202, {});
+      }
+      if (request.method === 'POST' && path === '/api/queue/edit') {
+        const { chatId = 'main', queueId, version, message, attachments = [] } = await readBody(request);
+        if (!Array.isArray(attachments) || typeof queueId !== 'string' || !Number.isInteger(version) || version < 0 || typeof message !== 'string' || (!message.trim() && !attachments.length)) return send(400, { error: 'Write a message or attach a file.' });
+        await host.editQueued(chatId, queueId, version, message || 'Please inspect the attached files.', attachments);
+        return send(200, {});
       }
       if (request.method === 'POST' && path === '/api/cancel') {
         const { chatId = 'main' } = await readBody(request);

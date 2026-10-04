@@ -194,12 +194,14 @@ it keeps the page open and asks you to approve another batch, take control or
 stop. Press-and-hold checks support a bounded hold duration; successful
 verification is not guaranteed.
 
-Open **Browser** in a chat to take control of its Chromium browser. Click or tap
+Open **Browser** in a chat to watch its Chromium browser without interrupting
+the agent. Press **Take control** to pause the agent and interact. Click or tap
 the live page, type normally on desktop, or use the keyboard field and Tab/Enter
 buttons on mobile. You can navigate, scroll, sign in and complete website MFA
 yourself. **Return to agent** hands back the same authenticated browser and
-resumes an interrupted task. Queued messages and jobs wait while you control it.
-Closing the view or losing connectivity leaves the agent paused; reopen Browser
+resumes an interrupted task while keeping the live view open. Queued messages
+and jobs wait while you control it. Closing a view you took control of or losing
+connectivity leaves the agent paused; reopen Browser
 to reconnect. An absent viewer releases Chromium RAM after three minutes while
 retaining cookies, including session cookies in a private file. The live view uses the existing authenticated connection;
 it requires HTTPS for remote access and adds no public port or VNC service.
@@ -212,6 +214,33 @@ privileged agent; this is not isolation from its root tools or a compromised
 VPS. Hardware/platform passkeys, OS file-picker windows and other native browser
 dialogs are not available through the page view. Browser state stays out of
 setup exports; protect the persistent data volume and its backups.
+
+Paste images or files into the composer, drop them there, or use **Attach files**.
+Ordinary text paste stays unchanged. OS file-copy clipboard support depends on
+the browser; the file picker and drag/drop remain available. Images and PDFs
+show small previews before and after sending. PDF first pages render on your
+device with lazy-loaded [PDF.js](https://mozilla.github.io/pdf.js/), one visible
+preview at a time, without server-side conversion or a thumbnail database.
+Image decoding, Markdown and math rendering also use your device. Agent-created
+images appear inline through `attach_file`; Markdown can embed protected
+attachment images or HTTPS images. Remote images send a request to their host
+without a referrer. Other files stay download-only.
+
+To edit a waiting message, press **↑** in an empty composer, choose its **Edit**
+button, right-click it, or hold it briefly. **Save** replaces that queued message
+and its attachments; **Cancel** restores your draft. Already-started messages
+cannot be edited, and simultaneous edits from another window are rejected.
+
+Main stays at the top of the sidebar. Select a side chat and use **Pin chat** to
+keep it above other side chats. Chats sort by your last sent message, including
+queued messages; agent replies and scheduled jobs do not move them around.
+Pins and message order persist across restarts.
+
+Enable browser notifications in **Settings** for replies, failures and approvals
+in background chats. Notification bodies do not include private message text.
+The page must remain open and connected; there is no push service or closed-tab
+delivery. HTTPS or localhost is required, and OS/browser notification settings
+still apply. Unread activity also appears in the tab title.
 
 ## Credentials
 

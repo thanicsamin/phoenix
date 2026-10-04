@@ -51,8 +51,8 @@ export class Chat extends EventEmitter {
     if (typeof message !== 'string' || !message.trim() || message.length > 40000 || (this.files?.display(message, this.chatId).text || message).length > 32000) return Promise.reject(new Error('Message must contain 1–32000 characters.'));
     if (this.pending >= 10) return Promise.reject(new Error('Agent queue is full. Try again shortly.'));
     this.pending++;
-    const queued = { message, source };
     const runId = randomUUID();
+    const queued = { id: runId, version: 0, message, source, images };
     const origin = source === 'web' ? 'web' : source.startsWith('Scheduled task:') ? 'scheduler' : source === 'Incoming email' ? 'email' : 'channel';
     const generation = this.generation;
     const waitSignal = this.waitAbort.signal;
@@ -69,15 +69,17 @@ export class Chat extends EventEmitter {
       log.info('run.started', { runId, chatId: this.chatId, origin, queued: this.pending - 1 });
       const start = this.session.messages.length;
       try {
-        await this.session.prompt(source === 'web' ? message : `[${source}]\n${message}`, { expandPromptTemplates: false, images });
+        await this.session.prompt(source === 'web' ? queued.message : `[${source}]\n${queued.message}`, { expandPromptTemplates: false, images: queued.images });
         await this.session.waitForIdle();
         const replies = this.session.messages.slice(start).filter(item => item.role === 'assistant');
         if (replies.some(item => item.stopReason === 'aborted')) throw new Error('Request cancelled.');
         const failed = replies.find(item => item.stopReason === 'error');
         if (failed) throw new Error(failed.errorMessage || 'The model request failed.');
         log.info('run.finished', { runId, chatId: this.chatId, durationMs: Math.round(performance.now() - started) });
+        this.notice = { id: runId, type: 'reply' };
         return replies.map(textOf).filter(Boolean).join('\n\n') || 'Done.';
       } catch (error) {
+        if (error.message !== 'Request cancelled.') this.notice = { id: runId, type: 'error' };
         log[error.message === 'Request cancelled.' ? 'info' : 'error']('run.failed', { runId, chatId: this.chatId, durationMs: Math.round(performance.now() - started), error });
         throw error;
       }
@@ -92,6 +94,12 @@ export class Chat extends EventEmitter {
       this.changed();
     });
     return job;
+  }
+  editable(id, version) {
+    const queued = this.queued.find(item => item.id === id && item.source === 'web');
+    if (!queued) throw Object.assign(Error('This message has already started or was cancelled.'), { status: 409 });
+    if (queued.version !== version) throw Object.assign(Error('This queued message changed in another window. Reopen it to edit.'), { status: 409 });
+    return queued;
   }
   async steer(message, images = []) {
     if (this.browserControl?.controlled) throw Object.assign(new Error('Return browser control to the agent first.'), { status: 409 });
@@ -112,7 +120,7 @@ export class Chat extends EventEmitter {
         .slice(-100).map(message => message.role === 'toolResult'
           ? { role: 'assistant', text: '', attachments: [message.details.attachment] }
           : { role: message.role, ...(this.files?.display(textOf(message), this.chatId) || { text: textOf(message) }) }),
-        ...[...this.queued, ...this.steering].map(({ message, steered }) => ({ role: 'user', ...(this.files?.display(message, this.chatId) || { text: message }), queued: true, steered }))],
+        ...[...this.queued, ...this.steering].map(({ id, version, source, message, steered }) => ({ role: 'user', ...(this.files?.display(message, this.chatId) || { text: message }), queued: true, steered, ...(source === 'web' && !steered ? { queueId: id, version } : {}) }))],
     };
   }
   async close() {
@@ -141,7 +149,9 @@ export class Host extends EventEmitter {
     try { this.records = JSON.parse(await readFile(join(this.dataDir, 'chats.json'), 'utf8')); }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
     if (!Array.isArray(this.records) || this.records.some(record => !/^(main|[0-9a-f-]{36})$/.test(record.id)
-      || (record.archived !== undefined && typeof record.archived !== 'boolean') || typeof record.title !== 'string' || !Array.isArray(record.jobs) || !Array.isArray(record.permissions))) throw new Error('Invalid chat metadata.');
+      || (record.archived !== undefined && typeof record.archived !== 'boolean') || (record.pinned !== undefined && typeof record.pinned !== 'boolean')
+      || (record.lastSentAt !== undefined && (!Number.isSafeInteger(record.lastSentAt) || record.lastSentAt < 0))
+      || typeof record.title !== 'string' || !Array.isArray(record.jobs) || !Array.isArray(record.permissions))) throw new Error('Invalid chat metadata.');
     if (!this.records.length) {
       this.records.push({ id: 'main', title: 'Main chat', jobs: [], permissions: [] });
       for (const template of this.config.chats) {
@@ -184,6 +194,17 @@ export class Host extends EventEmitter {
     record.archived = archived; await this.save();
     return { id, archived };
   }
+  async pinChat(id, pinned) {
+    if (typeof id !== 'string' || typeof pinned !== 'boolean') throw Object.assign(Error('Choose whether to pin this chat.'), { status: 400 });
+    const record = this.record(id);
+    if (id === 'main') throw Object.assign(Error('The main chat already stays at the top.'), { status: 409 });
+    record.pinned = pinned; await this.save(); return { id, pinned };
+  }
+  sent(id) {
+    // A queue submission counts immediately; replies and scheduled runs do not.
+    this.record(id).lastSentAt = Math.max(Date.now(), ...this.records.map(record => (record.lastSentAt || 0) + 1));
+    this.save().catch(error => log.error('chat.order_save_failed', { error }));
+  }
   async routeChat(route, title) {
     return this.records.find(chat => chat.route === route) || await this.createChat(title, route);
   }
@@ -221,19 +242,32 @@ export class Host extends EventEmitter {
     if (this.closing) throw new Error('Agent is shutting down.');
     const chat = await this.getChat(id);
     const input = await this.files.prepare(message, attachmentIds, id, chat.session.model);
-    return chat.submit(input.message, source, input.images);
+    const pending = chat.pending;
+    const result = chat.submit(input.message, source, input.images);
+    if (source === 'web' && chat.pending > pending) this.sent(id);
+    return result;
   }
   async steer(message, id = 'main', attachmentIds = []) {
     const chat = await this.getChat(id);
     const input = await this.files.prepare(message, attachmentIds, id, chat.session.model);
-    return chat.steer(input.message, input.images);
+    const result = chat.steer(input.message, input.images);
+    if (chat.steering.some(item => item.message === input.message)) this.sent(id);
+    return result;
+  }
+  async editQueued(id, queueId, version, message, attachments = []) {
+    const chat = await this.getChat(id);
+    chat.editable(queueId, version);
+    const input = await this.files.prepare(message, attachments, id, chat.session.model);
+    const queued = chat.editable(queueId, version); // Upload preparation can yield to the running task.
+    queued.message = input.message; queued.images = input.images; queued.version++;
+    chat.changed();
   }
   async state(id = 'main') {
     const chat = await this.getChat(id);
     const record = this.record(id);
-    return { ...chat.state(), browser: this.browserControls?.get(id)?.state(), models: this.modelRuntime ? modelChoices(this.modelRuntime) : [], revision: this.revision, uiVersion: this.ui?.version, internet: this.internet?.status(), chatId: id, title: record.title, archived: !!record.archived, extensions: this.extensions,
-      chats: this.records.map(({ id, title, jobs, archived }) => ({ id, title, archived: !!archived, jobs: jobs.filter(job => job.enabled).length,
-        busy: (this.loaded.get(id)?.pending || 0) > 0, approval: [...this.approvals.values()].some(item => item.chatId === id) })), jobs: record.jobs,
+    return { ...chat.state(), browser: this.browserControls?.get(id)?.state(), models: this.modelRuntime ? modelChoices(this.modelRuntime) : [], revision: this.revision, uiVersion: this.ui?.version, internet: this.internet?.status(), chatId: id, title: record.title, archived: !!record.archived, pinned: !!record.pinned, extensions: this.extensions,
+      chats: [...this.records].sort((a, b) => Number(b.id === 'main') - Number(a.id === 'main') || Number(!!b.pinned) - Number(!!a.pinned) || (b.lastSentAt || 0) - (a.lastSentAt || 0)).map(({ id, title, jobs, archived, pinned }) => ({ id, title, archived: !!archived, pinned: !!pinned, jobs: jobs.filter(job => job.enabled).length,
+        busy: (this.loaded.get(id)?.pending || 0) > 0, notice: this.loaded.get(id)?.notice, approval: [...this.approvals.values()].find(item => item.chatId === id)?.id || false })), jobs: record.jobs,
       approvals: [...this.approvals.values()].filter(approval => approval.chatId === id).map(({ id, tool, args }) => ({ id, tool, args })),
     };
   }

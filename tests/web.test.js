@@ -145,6 +145,12 @@ test('file and workspace endpoints require auth/CSRF, isolate chats and return s
   const response = await fetch(base + download, { headers: { Cookie: cookie } }); assert.equal(await response.text(), 'File contents.');
   assert.match(response.headers.get('content-disposition'), /attachment/); assert.equal(response.headers.get('content-type'), 'application/octet-stream');
   const side = await host.createChat('Side');
+  const image = await host.files.add('main', 'picture.png', [Buffer.from([137,80,78,71,13,10,26,10])]);
+  const inline = `${base}/api/files/image?chat=main&id=${image.id}`;
+  assert.equal((await fetch(inline)).status, 401);
+  const previewImage = await fetch(inline, { headers: { Cookie: cookie } }); assert.equal(previewImage.headers.get('content-type'), 'image/png'); assert.equal(previewImage.headers.get('content-disposition'), 'inline');
+  assert.equal((await fetch(`${inline.replace('chat=main', `chat=${side.id}`)}`, { headers: { Cookie: cookie } })).status, 404);
+  assert.equal((await fetch(`${base}/api/files/image?id=${file.id}`, { headers: { Cookie: cookie } })).status, 415);
   assert.equal((await fetch(base + '/api/chat/archive', { method: 'POST', headers: { Origin: base, 'Content-Type': 'application/json' }, body: JSON.stringify({ chatId: side.id, archived: true }) })).status, 401);
  assert.equal((await fetch(`${base}${download}&chat=${side.id}`, { headers: { Cookie: cookie } })).status, 404);
   const post = (path, body) => fetch(base + path, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -155,6 +161,9 @@ test('file and workspace endpoints require auth/CSRF, isolate chats and return s
   assert.equal((await post('/api/chat/archive', { chatId: side.id, archived: false })).status, 200); assert.equal(host.record(side.id).archived, false);
   assert.equal((await post('/api/chat/archive', { chatId: 'main', archived: true })).status, 409);
   assert.equal((await post('/api/chat/archive', { chatId: side.id, archived: 'true' })).status, 400);
+  assert.equal((await post('/api/chat/pin', { chatId: side.id, pinned: true })).status, 200); assert.equal(host.record(side.id).pinned, true);
+  assert.equal((await post('/api/chat/pin', { chatId: 'main', pinned: false })).status, 409);
+  assert.equal((await post('/api/chat/pin', { chatId: side.id, pinned: 'true' })).status, 400);
   const preview = host.auth.preview();
   assert.equal((await fetch(base + '/api/chat/archive', { method: 'POST', headers: { Origin: base, 'Content-Type': 'application/json', Cookie: `phoenix=${preview.token}`, 'X-CSRF-Token': preview.csrf }, body: JSON.stringify({ chatId: side.id, archived: true }) })).status, 403);
   assert.equal((await post('/api/workspace/file', { path: 'AGENTS.md', text: 'Updated prompt.' })).status, 200);

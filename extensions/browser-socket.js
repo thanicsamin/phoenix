@@ -13,7 +13,8 @@ export function attachBrowserSocket(server, host, tokenFrom, allowedHost) {
       return socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
     }
     sockets.handleUpgrade(request, socket, head, connection => {
-      let control; let starting = false; let closed = false;
+      let control; let starting = false; let closed = false; let taking = false;
+      let width; let height;
       connection.alive = true; connection.ownerToken = token;
       const timer = setTimeout(() => connection.close(1008, 'Start browser control'), 5000); timer.unref();
       const fail = () => { if (connection.readyState === 1) connection.send(JSON.stringify({ type: 'error', error: 'Browser action failed. Try again or reconnect.' })); };
@@ -34,8 +35,18 @@ export function attachBrowserSocket(server, host, tokenFrom, allowedHost) {
             if (closed) return;
             control = host.browserControls?.get(data.chatId);
             if (!control) throw Error();
-            await control.claim(connection, data.width, data.height);
-          } else await control.input(connection, data);
+            width = data.width; height = data.height;
+            await control.view(connection);
+          } else if (data.type === 'take') {
+            if (starting || taking || control.controlled) throw Error();
+            taking = true;
+            try { await control.claim(connection, width, height); }
+            finally { taking = false; }
+          } else {
+            if (taking) throw Error();
+            await control.input(connection, data);
+          }
+          starting = false;
         } catch { if (!control || control.socket !== connection) connection.close(1008, 'Browser control unavailable'); else fail(); }
       });
     });

@@ -18,19 +18,28 @@ export class BrowserControl {
     signal?.throwIfAborted();
   }
   async claim(socket, width, height) {
-    if (this.closed || this.releasing || this.socket) throw Error('Browser is already controlled in another window.');
-    this.socket = socket; clearTimeout(this.idle);
-    const chat = this.host.loaded?.get(this.chatId);
-    this.interrupted ||= !this.controlled && !!chat?.pending;
-    this.controlled = true; this.host.changed();
-    // Stop active model/tool work before displaying the private login surface.
-    for (const approval of [...this.host.approvals?.values() || []]) if (approval.chatId === this.chatId) await this.host.approve(approval.id, false);
-    if (chat?.pending) { await chat.session.abort(); await chat.session.waitForIdle(); }
-    if (chat) { chat.error = ''; this.host.changed(); }
-    if (this.socket !== socket) return;
-    const page = await this.browser.ensure();
-    await page.setViewportSize({ width, height });
-    await this.watch(page, socket);
+    if (this.closed || this.releasing || this.claiming || this.socket && this.socket !== socket) throw Error('Browser is already controlled in another window.');
+    this.claiming = true;
+    try {
+      this.socket = socket; clearTimeout(this.idle);
+      const chat = this.host.loaded?.get(this.chatId);
+      this.interrupted ||= !this.controlled && !!chat?.pending;
+      this.controlled = true; this.host.changed();
+      // Stop active model/tool work before displaying the private login surface.
+      for (const approval of [...this.host.approvals?.values() || []]) if (approval.chatId === this.chatId) await this.host.approve(approval.id, false);
+      if (chat?.pending) { await chat.session.abort(); await chat.session.waitForIdle(); }
+      if (chat) { chat.error = ''; this.host.changed(); }
+      if (this.socket !== socket) return;
+      const page = await this.browser.ensure();
+      await page.setViewportSize({ width, height });
+      await this.watch(page, socket);
+    } finally { this.claiming = false; }
+  }
+  async view(socket) {
+    if (this.closed || this.releasing || this.socket && this.socket !== socket) throw Error('Browser is already open in another window.');
+    this.socket = socket; clearTimeout(this.idle); this.host.changed();
+    try { await this.watch(await this.browser.ensure(), socket); if (!this.controlled) this.browser.idle(); }
+    catch (error) { await this.disconnect(socket); throw error; }
   }
   async watch(page, socket = this.socket) {
     if (!socket || this.socket !== socket || this.closed) return;
@@ -40,15 +49,15 @@ export class BrowserControl {
     const cdp = await page.context().newCDPSession(page);
     if (this.socket !== socket || revision !== this.watchRevision) { await cdp.detach(); return; }
     this.viewport = page.viewportSize() || this.viewport || { width: 1280, height: 900 };
-    await page.setViewportSize(this.viewport);
-    await page.bringToFront();
+    // Watching must not resize the website or interrupt the agent's navigation.
+    if (this.controlled) { await page.setViewportSize(this.viewport); await page.bringToFront(); }
     if (this.socket !== socket || revision !== this.watchRevision) { await cdp.detach(); return; }
-    this.cdp = cdp; this.browser.use(page);
+    this.cdp = cdp; if (this.controlled) this.browser.use(page);
     const location = () => {
       if (this.socket !== socket) return;
       let origin = 'about:blank'; try { origin = new URL(page.url()).origin; } catch { /* Initial page. */ }
-      const { width, height } = page.viewportSize();
-      socket.send(JSON.stringify({ type: 'ready', width, height, origin }));
+      const { width, height } = page.viewportSize() || this.viewport;
+      socket.send(JSON.stringify({ type: 'ready', width, height, origin, controlled: this.controlled }));
     };
     page.on('framenavigated', location);
     const closed = () => {
@@ -73,7 +82,7 @@ export class BrowserControl {
     if ((this.pending || 0) >= 32) throw Error('Too many browser inputs.');
     this.pending = (this.pending || 0) + 1;
     const job = this.inputs.then(async () => {
-      if (this.socket !== socket || this.closed) return;
+      if (this.socket !== socket || !this.controlled || this.closed) return;
       const page = await this.browser.ensure();
       const { width, height } = page.viewportSize();
       if (data.type === 'click') {
@@ -108,22 +117,21 @@ export class BrowserControl {
     if (this.socket !== socket) return;
     this.socket = undefined; await this.detach(); this.host.changed();
     // Keep the agent paused, but release Chromium RAM after a dropped viewer.
-    this.idle = setTimeout(() => this.browser.close().catch(() => {}), 3 * 60000); this.idle.unref();
+    if (this.controlled) { this.idle = setTimeout(() => this.browser.close().catch(() => {}), 3 * 60000); this.idle.unref(); }
+    else this.browser.idle();
   }
   async release() {
-    if (!this.controlled || this.closed || this.releasing) throw Object.assign(Error('Browser is not ready for handback.'), { status: 409 });
+    if (!this.controlled || this.closed || this.releasing || this.claiming) throw Object.assign(Error('Browser is not ready for handback.'), { status: 409 });
     this.releasing = true;
     clearTimeout(this.idle);
     await this.inputs;
-    const socket = this.socket;
-    this.socket = undefined; socket?.close(1000, 'Returned to agent');
-    await this.detach();
     // Don't expose unfinished password/one-time-code fields in the next snapshot.
     try { await this.browser.clearSecrets(); await this.browser.persist?.(); }
     catch { this.releasing = false; throw Object.assign(Error('Could not clear login fields. Reconnect before handing back.'), { status: 409 }); }
     const interrupted = this.interrupted; this.interrupted = false;
     this.controlled = false; for (const done of this.waiters) done(); this.host.changed();
     this.releasing = false;
+    if (this.socket?.readyState === 1) this.socket.send(JSON.stringify({ type: 'control', controlled: false }));
     this.browser.idle();
     const chat = this.host.loaded?.get(this.chatId);
     if (interrupted && chat && !chat.pending && !this.host.closing) {

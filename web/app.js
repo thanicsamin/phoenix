@@ -12,22 +12,27 @@ const drafts = new Map();
 const draftMessages = new Map();
 let uploading = 0;
 let mutations = 0;
+let queueEdit;
+const notifications = window.initNotifications({ selectChat: async id => { if (!signedIn) return; switchChat(id); closeChats(); await refresh().catch(() => {}); } });
 const attachments = () => drafts.get(chatId) || [];
 const loadedUI = $('meta[name="ui-version"]')?.content;
 let pendingUI;
 let restoringScroll;
 try {
   const saved = JSON.parse(sessionStorage.getItem('phoenix-drafts') || 'null');
-  if (saved) { chatId = saved.chatId || 'main'; for (const item of saved.messages || []) draftMessages.set(...item); for (const item of saved.files || []) drafts.set(...item); restoringScroll = saved.scroll; }
+  if (saved) { chatId = saved.chatId || 'main'; for (const item of saved.messages || []) draftMessages.set(...item); for (const item of saved.files || []) drafts.set(...item); restoringScroll = saved.scroll; queueEdit = saved.queueEdit; }
 } catch { /* Storage may be disabled. */ }
+const linkedChat = new URLSearchParams(location.search).get('chat');
+if (linkedChat && /^(main|[0-9a-f-]{36})$/.test(linkedChat)) { chatId = linkedChat; history.replaceState(null, '', location.pathname); }
 $('#message').value = draftMessages.get(chatId) || '';
+$('#queue-edit').hidden = !queueEdit;
 function persistDrafts() {
   draftMessages.set(chatId, $('#message').value);
-  try { sessionStorage.setItem('phoenix-drafts', JSON.stringify({ chatId, messages: [...draftMessages], files: [...drafts], scroll: $('#chat-scroll').scrollTop })); } catch { /* Storage may be full or disabled. */ }
+  try { sessionStorage.setItem('phoenix-drafts', JSON.stringify({ chatId, messages: [...draftMessages], files: [...drafts], queueEdit, scroll: $('#chat-scroll').scrollTop })); } catch { /* Storage may be full or disabled. */ }
 }
 function sizeComposer() { const input = $('#message'); input.style.height = 'auto'; input.style.height = `${Math.min(input.scrollHeight, 200)}px`; }
 function refreshInterface() {
-  if (!pendingUI || document.querySelector('dialog[open]') || uploading || mutations || $('#microphone').getAttribute('aria-pressed') === 'true') return;
+  if (!pendingUI || document.querySelector('dialog[open]') || queueEdit || uploading || mutations || $('#microphone').getAttribute('aria-pressed') === 'true') return;
   persistDrafts(); location.reload();
 }
 function checkInterface(version) {
@@ -47,6 +52,9 @@ window.addEventListener('pagehide', persistDrafts);
 $('#message').addEventListener('input', () => { sizeComposer(); persistDrafts(); });
 for (const dialog of document.querySelectorAll('dialog')) dialog.addEventListener('close', refreshInterface);
 function switchChat(id) {
+  cancelQueueEdit();
+  window.resetPreviews();
+  notifications.read();
   window.stopVoice?.(); draftMessages.set(chatId, $('#message').value);
   chatId = id; $('#message').value = draftMessages.get(id) || ''; renderDrafts(); sizeComposer(); persistDrafts();
 }
@@ -84,7 +92,7 @@ async function refresh() {
   const state = await api(`/api/state?chat=${encodeURIComponent(requestedChat)}`);
   if (state && requestedChat === chatId) render(state);
 }
-function showLogin() { signedIn = false; pendingUI = undefined; drafts.clear(); draftMessages.clear(); $('#message').value = ''; try { sessionStorage.removeItem('phoenix-drafts'); } catch { /* Storage may be disabled. */ } window.stopVoice?.(); document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close()); closeChats(); signedIn = false; clearTimeout(reconnect); socket?.close(); $('#login').hidden = false; $('#app').hidden = true; }
+function showLogin() { cancelQueueEdit(); notifications.reset(); window.resetPreviews(true); signedIn = false; pendingUI = undefined; drafts.clear(); draftMessages.clear(); $('#message').value = ''; try { sessionStorage.removeItem('phoenix-drafts'); } catch { /* Storage may be disabled. */ } window.stopVoice?.(); document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close()); closeChats(); signedIn = false; clearTimeout(reconnect); socket?.close(); $('#login').hidden = false; $('#app').hidden = true; }
 function showApp() { signedIn = true; connectSocket(); revision = -1; $('#login').hidden = true; $('#app').hidden = false; renderDrafts(); sizeComposer(); refresh().catch(error => { $('#agent-error').textContent = error.message; }); poll(); }
 let promptBaseline = '';
 async function openSettings() {
@@ -94,20 +102,59 @@ async function openSettings() {
   try { $('#system-prompt').value = promptBaseline = (await api('/api/workspace/file?path=AGENTS.md')).text || ''; $('#prompt-status').textContent = ''; }
   catch (error) { $('#prompt-status').textContent = error.message; }
 }
-function messageNode(role, text, queued = false, files = [], steered = false) {
+function fileLink(file) {
+  const link = document.createElement('a'); link.href = `/api/files/download?chat=${encodeURIComponent(file.chatId)}&id=${encodeURIComponent(file.id)}`; link.download = file.name;
+  if (file.mime.startsWith('image/') || file.mime === 'application/pdf') {
+    link.className = 'file-card';
+    const preview = document.createElement('img'); preview.className = 'file-preview'; preview.alt = file.mime === 'application/pdf' ? `First page of ${file.name}` : file.name; preview.loading = 'lazy';
+    if (file.mime === 'application/pdf') window.previewPDF(preview, link.href);
+    else preview.src = `/api/files/image?chat=${encodeURIComponent(file.chatId)}&id=${encodeURIComponent(file.id)}`;
+    preview.addEventListener('error', () => { preview.remove(); link.title = 'Preview unavailable · Download file'; }, { once: true });
+    link.append(preview);
+  }
+  const name = document.createElement('span'); name.textContent = file.name; link.append(name); return link;
+}
+function beginQueueEdit(item) {
+  if (!item?.queueId) return;
+  cancelQueueEdit();
+  queueEdit = { id: item.queueId, version: item.version, message: $('#message').value, files: [...attachments()] };
+  $('#message').value = item.text; drafts.set(chatId, (item.attachments || []).map(file => ({ ...file, queued: true })));
+  $('#queue-edit').hidden = false; sizeComposer(); renderDrafts(); $('#message').focus(); if (latest) render(latest);
+}
+function cancelQueueEdit() {
+  if (!queueEdit) return;
+  const previous = queueEdit; queueEdit = undefined;
+  // Keep any files uploaded during editing available in the restored draft.
+  drafts.set(chatId, [...previous.files, ...attachments().filter(file => !file.queued && !previous.files.some(item => item.id === file.id))]);
+  $('#message').value = previous.message; $('#queue-edit').hidden = true;
+  sizeComposer(); renderDrafts(); if (latest) render(latest);
+}
+$('#cancel-queue-edit').addEventListener('click', cancelQueueEdit);
+function messageNode(role, text, queued = false, files = [], steered = false, item) {
   const article = document.createElement('article');
   article.className = `message ${role}`;
   const label = document.createElement('div'); label.className = 'message-label';
   if (role === 'assistant') { const icon = document.createElement('span'); icon.className = 'mark'; icon.setAttribute('aria-hidden', 'true'); const bird = document.createElement('img'); bird.src = '/bird.svg'; bird.alt = ''; icon.append(bird); label.append(icon); }
   label.append(document.createTextNode(role === 'user' ? queued ? steered ? 'You · Steering' : 'You · Queued' : 'You' : latest.name));
+  if (item?.queueId) {
+    article.dataset.queueId = item.queueId;
+    const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'edit-queued'; edit.textContent = 'Edit'; edit.setAttribute('aria-label', 'Edit queued message'); edit.addEventListener('click', () => beginQueueEdit(item)); label.append(edit);
+    article.addEventListener('contextmenu', event => { event.preventDefault(); beginQueueEdit(item); });
+    let hold; let start;
+    const clear = () => { clearTimeout(hold); hold = undefined; };
+    article.addEventListener('pointerdown', event => { if (event.button !== 0 || event.target.closest('a,button')) return; start = { x: event.clientX, y: event.clientY }; hold = setTimeout(() => beginQueueEdit(item), 550); });
+    article.addEventListener('pointermove', event => { if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) > 8) clear(); });
+    for (const event of ['pointerup', 'pointercancel', 'pointerleave']) article.addEventListener(event, clear);
+  }
   const body = document.createElement('div'); body.className = 'message-body markdown'; body.append(window.renderMarkdown(text));
   if (role === 'assistant' && text) window.addReadAloud?.(label, body);
   const links = document.createElement('div'); links.className = 'attachments';
-  for (const file of files) { const link = document.createElement('a'); link.href = `/api/files/download?chat=${encodeURIComponent(file.chatId)}&id=${encodeURIComponent(file.id)}`; link.download = file.name; link.textContent = file.name; links.append(link); }
+  for (const file of files) links.append(fileLink(file));
   article.append(label, body, links); return article;
 }
 function render(state) {
   latest = state;
+  notifications.update(state.chats, state.chatId);
   revision = state.revision;
   $('#agent-name').textContent = state.name;
   $('#chat-title').textContent = state.title;
@@ -142,6 +189,9 @@ function render(state) {
   }
   $('#connection').textContent = state.busy ? 'Working' : '';
   $('#archive-chat').hidden = chatId === 'main';
+  $('#pin-chat').hidden = chatId === 'main';
+  $('#pin-chat').textContent = state.pinned ? 'Unpin chat' : 'Pin chat';
+  $('#pin-chat').setAttribute('aria-pressed', String(state.pinned));
   $('#archive-chat').textContent = state.archived ? 'Restore chat' : 'Archive chat';
   $('#archive-chat').setAttribute('aria-label', state.archived ? 'Restore chat' : 'Archive chat');
   $('#archive-chat').title = state.archived ? 'Restore chat' : 'Archive chat';
@@ -153,15 +203,16 @@ function render(state) {
   $('#agent-error').textContent = state.error;
   $('#key-banner').hidden = state.configured;
   $('#send').disabled = !state.configured || uploading > 0; $('#send').title = state.busy ? 'Send after the current task' : 'Send message';
-  $('#send').textContent = state.busy ? 'Queue' : '↑'; $('#send').classList.toggle('queued', state.busy); $('#send').setAttribute('aria-label', state.busy ? 'Queue message' : 'Send message');
-  $('#steer').hidden = !state.steerable || state.browser?.controlled; $('#steer').disabled = uploading > 0;
+  $('#send').textContent = queueEdit ? 'Save' : state.busy ? 'Queue' : '↑'; $('#send').classList.toggle('queued', state.busy || !!queueEdit); $('#send').setAttribute('aria-label', queueEdit ? 'Save queued message' : state.busy ? 'Queue message' : 'Send message');
+  $('#steer').hidden = !!queueEdit || !state.steerable || state.browser?.controlled; $('#steer').disabled = uploading > 0;
   $('#stop').hidden = !state.busy;
   $('#activity').textContent = state.browser?.controlled ? 'You control the browser · Agent paused' : state.approvals.length ? 'Waiting for your approval…' : state.tool ? `Using ${state.tool}…` : state.busy ? 'Thinking…' : '';
   stableChildren('#chat-list', [chatId, showingArchived, state.chats], () => state.chats.filter(chat => !!chat.archived === showingArchived).map(chat => {
     const button = document.createElement('button'); button.className = `chat-link${chat.id === chatId ? ' selected' : ''}`;
     button.setAttribute('aria-current', String(chat.id === chatId));
     const title = document.createElement('span'); title.textContent = chat.title;
-    const status = document.createElement('small'); status.textContent = chat.approval ? 'Approval' : chat.busy ? 'Working' : chat.jobs ? `${chat.jobs} job${chat.jobs === 1 ? '' : 's'}` : '';
+    const status = document.createElement('small'); status.textContent = (chat.pinned ? '⌖ ' : '') + (chat.approval ? 'Approval' : chat.busy ? 'Working' : chat.jobs ? `${chat.jobs} job${chat.jobs === 1 ? '' : 's'}` : '');
+    if (chat.pinned) button.title = 'Pinned chat';
     button.append(title, status); button.addEventListener('click', async () => {
       switchChat(chat.id); revision = -1; closeChats(); $('#messages').replaceChildren();
       try { await refresh(); } catch (error) { $('#agent-error').textContent = error.message; }
@@ -176,7 +227,7 @@ function render(state) {
     const actions = document.createElement('div'); actions.className = 'approval-actions';
     if (verification) {
       const take = document.createElement('button'); take.textContent = 'Take control';
-      take.addEventListener('click', () => $('#browser').click()); actions.append(take);
+      take.addEventListener('click', () => window.openBrowser(true)); actions.append(take);
     }
     for (const [label, allow, remember] of verification ? [['Try CAPTCHA', true, false], ['Stop', false, false]] : [['Deny', false, false], ['Allow once', true, false], ['Allow in this chat', true, true]]) {
       const button = document.createElement('button'); button.textContent = label;
@@ -199,9 +250,9 @@ function render(state) {
   if (state.current) messages.push({ role: 'assistant', text: state.current });
   const previous = [...$('#messages').children];
   messages.forEach((item, index) => {
-    const key = JSON.stringify([state.chatId, state.name, item.role, item.text, !!item.queued, item.attachments, !!item.steered]);
+    const key = JSON.stringify([state.chatId, state.name, item.role, item.text, !!item.queued, item.attachments, !!item.steered, item.queueId, item.version]);
     if (previous[index]?.messageKey === key) return;
-    const node = messageNode(item.role, item.text, item.queued, item.attachments, item.steered); node.messageKey = key;
+    const node = messageNode(item.role, item.text, item.queued, item.attachments, item.steered, item); node.messageKey = key;
     if (previous[index]) previous[index].replaceWith(node); else $('#messages').append(node);
   });
   previous.slice(messages.length).forEach(node => node.remove());
@@ -237,6 +288,12 @@ $('#composer').addEventListener('submit', async event => {
   const id = chatId; const steering = event.submitter?.id === 'steer';
   $('#send').disabled = true; $('#steer').disabled = true;
   try {
+    if (queueEdit) {
+      const edit = queueEdit;
+      await api('/api/queue/edit', { chatId: id, queueId: edit.id, version: edit.version, message, attachments: files.map(file => file.id) });
+      if (chatId === id && queueEdit === edit) { drafts.set(id, []); cancelQueueEdit(); persistDrafts(); await refresh(); }
+      return;
+    }
     await api(steering ? '/api/steer' : '/api/prompt', { message, chatId: id, attachments: files.map(file => file.id) });
     drafts.set(id, (drafts.get(id) || []).filter(file => !files.includes(file)));
     if (draftMessages.get(id) === input) draftMessages.set(id, '');
@@ -244,7 +301,14 @@ $('#composer').addEventListener('submit', async event => {
   } catch (error) { $('#agent-error').textContent = error.message; }
   finally { $('#send').disabled = !latest?.configured || uploading > 0; $('#steer').disabled = uploading > 0; }
 });
-$('#message').addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && !matchMedia('(pointer: coarse), (max-width: 620px)').matches) { event.preventDefault(); $('#composer').requestSubmit(); } });
+$('#message').addEventListener('keydown', event => {
+  if (event.isComposing) return;
+  if (event.key === 'Escape' && queueEdit) { event.preventDefault(); cancelQueueEdit(); }
+  if (event.key === 'ArrowUp' && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && !$('#message').value && !queueEdit) {
+    const item = latest?.messages.findLast(item => item.queueId); if (item) { event.preventDefault(); beginQueueEdit(item); }
+  }
+  if (event.key === 'Enter' && !event.shiftKey && !matchMedia('(pointer: coarse), (max-width: 620px)').matches) { event.preventDefault(); $('#composer').requestSubmit(); }
+});
 for (const button of document.querySelectorAll('[data-prompt]')) button.addEventListener('click', () => { $('#message').value = button.dataset.prompt; $('#message').focus(); });
 $('#stop').addEventListener('click', async () => { try { await api('/api/cancel', { chatId }); } catch (error) { $('#agent-error').textContent = error.message; } });
 $('#new-chat').addEventListener('click', async () => {
@@ -271,6 +335,10 @@ $('#key-form').addEventListener('submit', async event => {
 $('#logout').addEventListener('click', async () => { try { await api('/api/logout', {}); showLogin(); } catch (error) { $('#agent-error').textContent = error.message; } });
 api('/api/session').then(result => { csrf = result.csrf; result.authenticated ? showApp() : showLogin(); }).catch(error => { showLogin(); $('#login-error').textContent = error.message; });
 $('#archived-chats').addEventListener('click', () => { showingArchived = !showingArchived; if (latest) render(latest); });
+$('#pin-chat').addEventListener('click', async () => {
+  try { await api('/api/chat/pin', { chatId, pinned: !latest.pinned }); await refresh(); }
+  catch (error) { $('#agent-error').textContent = error.message; }
+});
 $('#archive-chat').addEventListener('click', async () => {
   try {
     const archived = !latest.archived;
@@ -357,19 +425,29 @@ function renderDrafts() {
   persistDrafts();
   $('#draft-files').replaceChildren(...attachments().map(file => {
     const chip = document.createElement('span'); chip.className = 'file-chip';
-    const name = document.createElement('span'); name.textContent = file.name;
+    const link = fileLink(file);
     const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = '×'; remove.setAttribute('aria-label', `Remove ${file.name}`);
     remove.addEventListener('click', async () => {
       const id = chatId; remove.disabled = true;
-      try { await api('/api/files/remove', { id: file.id, chatId: id }); drafts.set(id, (drafts.get(id) || []).filter(item => item !== file)); renderDrafts(); }
+      try { if (!file.queued) await api('/api/files/remove', { id: file.id, chatId: id }); drafts.set(id, (drafts.get(id) || []).filter(item => item !== file)); renderDrafts(); }
       catch (error) { $('#agent-error').textContent = error.message; remove.disabled = false; }
     });
-    chip.append(name, remove); return chip;
+    chip.append(link, remove); return chip;
   }));
 }
 $('#attach').addEventListener('click', () => $('#attachment-files').click());
 $('#attachment-files').addEventListener('change', async () => {
-  const id = chatId; const files = [...$('#attachment-files').files]; $('#attachment-files').value = '';
+  const files = [...$('#attachment-files').files]; $('#attachment-files').value = ''; await uploadFiles(files);
+});
+$('#message').addEventListener('paste', event => {
+  const files = [...event.clipboardData.files];
+  if (files.length) { event.preventDefault(); uploadFiles(files); }
+});
+$('#composer').addEventListener('dragover', event => { if ([...event.dataTransfer.types].includes('Files')) event.preventDefault(); });
+$('#composer').addEventListener('drop', event => { if (event.dataTransfer.files.length) { event.preventDefault(); uploadFiles([...event.dataTransfer.files]); } });
+async function uploadFiles(files) {
+  if (!signedIn || uploading) return;
+  const id = chatId;
   uploading++; $('#attach').disabled = true; $('#send').disabled = true; $('#steer').disabled = true;
   try {
     if ((drafts.get(id) || []).length + files.length > 8) throw new Error('Attach up to eight files.');
@@ -380,8 +458,8 @@ $('#attachment-files').addEventListener('change', async () => {
       drafts.set(id, [...(drafts.get(id) || []), result]); if (id === chatId) renderDrafts();
     }
   } catch (error) { $('#agent-error').textContent = error.message; }
-  finally { uploading--; $('#attach').disabled = false; $('#send').disabled = !latest?.configured; $('#steer').disabled = false; }
-});
+  finally { uploading--; $('#attach').disabled = false; $('#send').disabled = !latest?.configured; $('#steer').disabled = false; persistDrafts(); }
+}
 $('#prompt-form').addEventListener('submit', async event => {
   event.preventDefault(); event.submitter.disabled = true; const text = $('#system-prompt').value;
   try { await api('/api/workspace/file', { path: 'AGENTS.md', text }); promptBaseline = text; $('#prompt-status').textContent = 'Saved'; }

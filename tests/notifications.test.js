@@ -1,0 +1,30 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { runInNewContext } from 'node:vm';
+
+const source = await readFile('web/notifications.js', 'utf8');
+test('opt-in notifications deduplicate replies and approvals, use private bodies and clear on logout', async () => {
+  const sent = []; let dismissed = 0; const button = { setAttribute() {}, addEventListener() {} }; const status = {};
+  const registration = { showNotification: async (...args) => sent.push(args), getNotifications: async () => [{ close: () => dismissed++ }] };
+  const document = { hidden: true, hasFocus: () => true, title: 'Phoenix', addEventListener() {}, querySelector: selector => selector === '#notifications' ? button : status };
+  const Notification = { permission: 'granted' };
+  const window = { isSecureContext: true, Notification, addEventListener() {} };
+  const navigator = { serviceWorker: { register: async () => registration, ready: Promise.resolve(registration), addEventListener() {} } };
+  runInNewContext(source, { window, document, navigator, Notification, localStorage: { getItem: () => 'true' } });
+  const notifications = window.initNotifications({ selectChat() {} });
+  const chat = { id: 'main', title: 'Private chat title' };
+  notifications.update([chat], 'main');
+  notifications.update([{ ...chat, notice: { id: 'one', type: 'reply' } }], 'main');
+  notifications.update([{ ...chat, notice: { id: 'one', type: 'reply' } }], 'main');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(sent.length, 1); assert.match(sent[0][1].body, /new reply/); assert.ok(!JSON.stringify(sent).includes(chat.title));
+  notifications.update([{ ...chat, approval: 'approval-one', notice: { id: 'one' } }], 'main');
+  notifications.update([{ ...chat, approval: 'approval-one', notice: { id: 'one' } }], 'main');
+  await new Promise(resolve => setImmediate(resolve)); assert.equal(sent.length, 2); assert.match(sent[1][1].body, /approval/);
+  document.hidden = false;
+  notifications.update([{ ...chat, notice: { id: 'two' } }], 'main');
+  await new Promise(resolve => setImmediate(resolve)); assert.equal(sent.length, 2);
+  notifications.reset(); await new Promise(resolve => setImmediate(resolve)); assert.equal(document.title, 'Phoenix'); assert.equal(dismissed, 1);
+  notifications.update([{ ...chat, notice: { id: 'three' } }], 'main'); await new Promise(resolve => setImmediate(resolve)); assert.equal(sent.length, 2);
+});

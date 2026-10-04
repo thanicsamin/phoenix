@@ -10,9 +10,10 @@ import { createAuth } from '../extensions/auth.js';
 import { createWebServer } from '../extensions/web.js';
 import { createLogger } from '../src/log.js';
 
-const data = '/data/browser-control-check'; await rm(data, { recursive: true, force: true }); await mkdir(data, { recursive: true });
+const data = process.env.PHOENIX_TEST_DATA || '/data/browser-control-check'; await rm(data, { recursive: true, force: true }); await mkdir(data, { recursive: true });
 const password = 'privateBrowserTest_92851'; let signedIn = false;
 const website = createServer(async (request, response) => {
+  if (request.url === '/framed') return response.end('<h1>Widget test</h1><iframe src="/verify"></iframe>');
   if (request.url === '/blocked') return response.end(`<h1>Verify you are human</h1><button id=verify onclick="this.textContent='Retry verification'">Verify</button>`);
   if (request.url === '/verify') return response.end(`<h1>Verify you are human</h1><button id=verify onclick="document.body.innerHTML='<h1>Verified</h1>'">Verify</button>`);
   if (request.method === 'POST' && request.url === '/login') {
@@ -30,7 +31,7 @@ Object.assign(host, { dataDir: data, extensions: {}, cleanups: [], approvals: ne
 host.auth = await createAuth(data, { password: 'browser-owner-fixture' });
 const chat = { pending: 0 }; host.loaded = new Map([['main', chat]]);
 let tool; const hooks = {};
-browser({ on(name, handler) { hooks[name] = handler; }, registerTool(value) { tool = value; } }, host, {}, 'main');
+browser({ on(name, handler) { hooks[name] = handler; }, registerTool(value) { tool = value; } }, host, { headless: process.env.PHOENIX_TEST_HEADLESS === '1' }, 'main');
 const control = host.browserControls.get('main');
 const server = createWebServer(host, createLogger('test', { write: line => logs.push(line) }));
 server.listen(0, '127.0.0.1'); await once(server, 'listening'); host.port = server.address().port;
@@ -47,6 +48,10 @@ try {
     await Promise.race([started, new Promise((_, reject) => { const timer = setTimeout(() => reject(Error('Viewer did not become ready')), 10000); timer.unref(); })]); return { socket: connection, frames: () => frames };
   };
   const viewer = await connect(); socket = viewer.socket;
+  assert.equal(control.controlled, false);
+  assert.equal(hooks.tool_call({ toolName: 'bash' }), undefined);
+  await tool.execute('fixture', { action: 'snapshot' });
+  await control.claim(control.socket, 800, 600);
   assert.equal(control.controlled, true); assert.equal(hooks.tool_call({ toolName: 'bash' }).block, true);
   for (let attempt = 0; attempt < 50 && !viewer.frames(); attempt++) await new Promise(resolve => setTimeout(resolve, 100));
   assert.ok(viewer.frames() > 0, 'Live Chromium JPEG frames received');
@@ -66,20 +71,22 @@ try {
   await host.browserClosers.get('main')();
   const restored = await tool.execute('fixture', { action: 'navigate', url: `${site}/account` }); assert.match(restored.content[0].text, /Signed in/);
   // A half-completed login never appears in the agent's next page snapshot.
+  await control.disconnect(socket); socket.terminate();
   socket = (await connect()).socket;
+  await control.claim(control.socket, 800, 600);
   await control.input(control.socket, { type: 'navigate', url: site }); await control.input(control.socket, { type: 'text', text: password });
   await control.release();
   const clean = await tool.execute('fixture', { action: 'snapshot' }); assert.ok(!clean.content[0].text.includes(password));
   // The owner policy permits three interactions; inspection uses no attempts.
   const waitApproval = async () => { for (let i = 0; i < 100 && !host.approvals.size; i++) await new Promise(resolve => setTimeout(resolve, 20)); assert.equal(host.approvals.size, 1); return [...host.approvals.keys()][0]; };
   const retry = await tool.execute('fixture', { action: 'navigate', url: `${site}/verify` });
-  assert.match(retry.content[0].text, /1 of 3/); assert.equal(host.approvals.size, 0);
+  assert.match(retry.content[0].text, /0 of 3 interactions completed; 3 remaining/); assert.equal(host.approvals.size, 0);
   const solved = await tool.execute('fixture', { action: 'click', selector: '#verify', durationMs: 150 }); assert.match(solved.content[0].text, /Verified/); assert.equal(solved.details.blocked, false);
   await tool.execute('fixture', { action: 'navigate', url: `${site}/blocked` });
   for (let attempt = 1; attempt <= 2; attempt++) {
     await tool.execute('fixture', { action: 'snapshot' });
     const result = await tool.execute('fixture', { action: 'click', selector: '#verify' });
-    assert.match(result.content[0].text, new RegExp(`${attempt + 1} of 3`)); assert.equal(host.approvals.size, 0);
+    assert.match(result.content[0].text, new RegExp(`${attempt} of 3 interactions completed; ${3 - attempt} remaining`)); assert.equal(host.approvals.size, 0);
   }
   const third = tool.execute('fixture', { action: 'click', selector: '#verify' });
   const id = await waitApproval(); assert.equal(host.approvals.get(id).args.attempts, 3);
@@ -91,11 +98,16 @@ try {
   chat.submit = async () => {};
   const takingOver = tool.execute('fixture', { action: 'snapshot' }, abort.signal);
   const rejected = assert.rejects(takingOver, /abort/i); await waitApproval();
-  socket = (await connect()).socket; await rejected; chat.pending = 0;
+  await control.claim(control.socket, 800, 600); await rejected; chat.pending = 0;
   assert.ok(host.browserPages.get('main')().endsWith('/blocked'), 'Takeover preserved the challenge page');
   assert.equal(host.approvals.size, 0); await control.release();
   const approved = tool.execute('fixture', { action: 'snapshot' });
-  await host.approve(await waitApproval(), true); assert.match((await approved).content[0].text, /1 of 3/);
+  await host.approve(await waitApproval(), true); assert.match((await approved).content[0].text, /0 of 3 interactions completed; 3 remaining/);
+  const framed = await tool.execute('fixture', { action: 'navigate', url: `${site}/framed` });
+  assert.match(framed.content[0].text, /Frame iframe/); assert.match(framed.content[0].text, /Verify you are human/);
+  const framedSolved = await tool.execute('fixture', { action: 'click', frame: 'iframe', selector: '#verify' });
+  assert.equal(framedSolved.details.blocked, false);
+  await tool.execute('fixture', { action: 'wait', durationMs: 50 });
   console.log('Verification policy passed: three automatic interactions, inspection does not consume attempts, fresh consent after three failures, and takeover preserves the page.');
   console.log('Browser takeover passed: real frames/keyboard/login, session persistence, disconnect/reconnect, owner-only handback, password-manager off and password-free snapshots/logs.');
 } finally {

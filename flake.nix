@@ -17,7 +17,7 @@
               fileset = pkgs.lib.fileset.unions [ ./package.json ./package-lock.json ./PHOENIX.md ./src ./extensions ./web ./agent.json ./flake.lock ./nix/agent-flake.nix ];
             };
             nodejs = pkgs.nodejs_24;
-            npmDepsHash = "sha256-VqMfQPWqL4FE5CAbQw3ry2B8OqAtfeAOpRQdco0ez2Q=";
+            npmDepsHash = "sha256-Mc+VIVwV2URQ8j9f2V7LbednSm07jRdf65nKvJg1tIQ=";
             npmFlags = [ "--ignore-scripts" "--omit=dev" ];
             dontNpmBuild = true;
             installPhase = ''

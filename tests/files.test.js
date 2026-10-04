@@ -21,6 +21,8 @@ test('attachments persist, isolate chats, retain exact bytes and pass images to 
   assert.equal(file.name, 'report.txt'); assert.equal(await readFile(files.path(file), 'utf8'), 'a\nb\n');
   const png = Buffer.from([137,80,78,71,13,10,26,10,0]);
   const image = await files.add('main', 'picture.png', [png]); assert.equal(image.mime, 'image/png');
+  const pdf = await files.add('main', 'report.pdf', [Buffer.from('%PDF-1.7\nfixture')]); assert.equal(pdf.mime, 'application/pdf');
+  const fake = await files.add('main', 'fake.pdf', [Buffer.from('<script>bad</script>')]); assert.equal(fake.mime, 'application/octet-stream');
   const prepared = await files.prepare('Please read', [file.id, image.id], 'main', { input: ['text', 'image'] });
   assert.deepEqual(prepared.images, [{ type: 'image', mimeType: 'image/png', data: png.toString('base64') }]);
   assert.deepEqual(files.display(prepared.message, 'main'), { text: 'Please read', attachments: [file, image] });
