@@ -15,8 +15,7 @@
     "files": {},
     "system": {},
     "permissions": {},
-    "scheduler": {},
-    "plaid": {}
+    "scheduler": {}
   },
   "pi": {
     "extensions": [],
