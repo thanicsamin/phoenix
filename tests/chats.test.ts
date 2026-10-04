@@ -104,6 +104,7 @@ test('deletion cancels approvals and removes only the chosen chat’s durable da
   await host.addJob(chosen.id, { name: 'Delete job', prompt: 'No more work', everyMinutes: 60 });
   async function* bytes() { yield Buffer.from('Private attachment'); }
   const removed = await host.files.add(chosen.id, 'chosen.txt', bytes()); const retained = await host.files.add(keep.id, 'keep.txt', bytes());
+  await host.files.prepare('Used upload', [removed.id], chosen.id); assert.equal(host.files.get(removed.id, chosen.id).used, true);
   const folders = [join(directory, 'pi', 'sessions', chosen.id), join(directory, 'browser', chosen.id), join(host.workspace, 'memory', 'chats', chosen.id)];
   for (const folder of folders) { await mkdir(folder, { recursive: true }); await writeFile(join(folder, 'fixture'), 'chat-owned data'); }
   await mkdir(join(host.workspace, 'memory', 'owner'), { recursive: true }); await writeFile(join(host.workspace, 'memory', 'owner', 'shared'), 'Owner facts'); await writeFile(join(host.workspace, 'output.txt'), 'Shared output');

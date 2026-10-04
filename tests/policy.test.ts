@@ -27,6 +27,7 @@ test('tool contracts distinguish local previews, untrusted reads, private reads 
   assert.equal(isOwnerUI('http://localhost:8080/', 8080), true); assert.equal(isOwnerUI('http://localhost.evil:8080/', 8080), false); assert.equal(isOwnerUI('http://localhost:8081/', 8080), false);
   assert.equal(readRisk('browser', { action: 'navigate' }, false), untrusted); assert.equal(readRisk('browser', {}, true), 0); assert.equal(readRisk('finance', {}, false), privateData | untrusted);
   assert.equal(readRisk('read', { path: '/data/pi/auth.json' }, false), privateData); assert.equal(readRisk('read', { path: 'src/index.ts' }, false), 0);
+  for (const tool of ['bash', 'powershell', 'email_read', 'unknown_tool']) assert.equal(readRisk(tool, {}, false), 3, `${tool} may return private data`);
   assert.equal(approvalReason('bash', { command: 'echo hi' }, 0, false, false), '');
   for (const tool of ['bash', 'powershell', 'write', 'edit', 'schedule', 'reload_agent', 'reload_ui', 'rollback_agent', 'new_custom_tool', 'attach_file']) assert.ok(approvalReason(tool, {}, untrusted, false, false), tool);
   assert.ok(approvalReason('memory', { action: 'remember', scope: 'owner' }, untrusted, false, false));
@@ -71,8 +72,8 @@ test('external messages cannot authorize custom tools or owner changes; failed p
   const { host, hooks } = await fixture(t); (await host.getChat()).source = 'Slack channel';
   assert.equal((await decision(host, () => hooks.tool_call({ toolName: 'bash', input: {} }))).result.block, true);
   assert.equal((await decision(host, () => hooks.tool_call({ toolName: 'unknown_extension', input: {} }))).result.block, true);
-  await hooks.tool_call({ toolName: 'email_read', input: {} }); assert.equal(host.record().readRisk, 1);
-  (await host.getChat()).source = 'web'; host.save = async () => { throw Error('Fixture disk unavailable'); };
+  await hooks.tool_call({ toolName: 'email_read', input: {} }); assert.equal(host.record().readRisk, 3);
+  (await host.getChat()).source = 'web'; host.record().readRisk = 1; host.save = async () => { throw Error('Fixture disk unavailable'); };
   await assert.rejects(hooks.tool_call({ toolName: 'finance', input: {} }), /disk unavailable/);
 });
 test('a concurrent private read invalidates cached consent before a browser action executes', async t => {
@@ -92,4 +93,9 @@ test('automatic channel replies cannot bypass private-data checks after Pi finis
   await decision(host, () => reply(host, 'Slack', 'Owner-reviewed request', async text => { sent.push(text); }, 'slack:fixture'), true, true);
   assert.deepEqual(sent, ['Private fixture balance']);
   channel.readRisk = untrusted; await reply(host, 'Slack', 'Normal reply', async text => { sent.push(text); }, 'slack:fixture'); assert.equal(sent.length, 2);
+});
+test('uploaded attachments mark their chat before the model can act on their contents', async t => {
+  const { host, hooks } = await fixture(t); await host.markAttachments('main', ['fixture-document']); assert.equal(host.record().readRisk, 3);
+  const { result } = await decision(host, () => hooks.tool_call({ toolName: 'bash', input: { command: 'execute_document_instruction' } })); assert.equal(result.block, true);
+  const untouched = await host.createChat(); await host.markAttachments(untouched.id, []); assert.equal(untouched.readRisk, undefined);
 });

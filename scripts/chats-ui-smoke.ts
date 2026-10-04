@@ -38,6 +38,8 @@ try {
   await page.getByRole('button', { name: 'New chat', exact: true }).click(); await waitTitle('New chat');
   assert.equal(await page.locator('#chat-dialog').isVisible(), false); assert.deepEqual(await order(), ['Main chat', 'New chat', 'Older']);
   assert.equal(await page.locator('#message').evaluate(element => element === document.activeElement), true);
+  await page.locator('#attachment-files').setInputFiles({ name: 'planner.txt', mimeType: 'text/plain', buffer: Buffer.from('Private fixture attachment') });
+  await page.getByLabel('Remove planner.txt', { exact: true }).waitFor({ state: 'visible' });
   await page.locator('#message').fill('Find a small desk planner'); await page.getByRole('button', { name: 'Send message', exact: true }).click(); await waitTitle('Find a small desk planner');
   const first = host.records.at(-1); await tools.get(first.id).execute('name', { title: 'Desk planners', automatic: true }); await waitTitle('Desk planners');
   await page.getByRole('button', { name: 'Chat details', exact: true }).click(); await page.locator('#chat-name').fill('My planner');
@@ -73,6 +75,9 @@ try {
   await page.getByRole('button', { name: 'Delete', exact: true }).click(); await page.getByRole('button', { name: 'Delete permanently', exact: true }).click(); await waitTitle('Main chat');
   await observer.locator('#chat-title').getByText('Main chat', { exact: true }).waitFor({ state: 'visible' }); await observer.close();
   assert.throws(() => host.record(active.id), /not found/); assert.equal(host.records.length, 4);
+  await page.locator('#chat-list').getByText('My planner', { exact: true }).click(); await waitTitle('My planner');
+  await page.getByRole('button', { name: 'Chat details', exact: true }).click(); await page.getByRole('button', { name: 'Delete', exact: true }).click(); await page.getByRole('button', { name: 'Delete permanently', exact: true }).click(); await waitTitle('Main chat');
+  assert.equal(host.files.items.some(file => file.chatId === first.id), false);
   await page.getByRole('button', { name: 'Chat details', exact: true }).click(); assert.equal(await page.locator('#delete-chat').isVisible(), false); await page.getByRole('button', { name: 'Close chat details', exact: true }).click();
   for (const width of [1280, 390, 320]) {
     await page.setViewportSize({ width, height: 844 });

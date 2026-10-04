@@ -115,9 +115,9 @@ export class Files {
       return { text: message.slice(0, split), attachments: files.map((file: { id: unknown }) => this.public(this.get(file.id, chatId))) };
     } catch { return { text: message }; }
   }
-  async remove(id: string, chatId: string) {
+  async remove(id: string, chatId: string, deletingChat = false) {
     const file = this.get(id, chatId);
-    if (file.used) throw fail('This attachment is part of a conversation.', 409);
+    if (file.used && !deletingChat) throw fail('This attachment is part of a conversation.', 409);
     const previous = this.items; this.items = this.items.filter(item => item !== file);
     try { await this.save(); } catch (caught) { const error = errorOf(caught); this.items = previous; throw error; }
     await rm(join(this.dataDir, 'attachments', id), { recursive: true, force: true });

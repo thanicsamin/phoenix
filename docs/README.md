@@ -346,9 +346,10 @@ still apply. Unread activity also appears in the tab title.
 
 The native `permissions` extension also enforces small information-flow checks
 through Pi's tool hooks, with no policy service or additional dependency.
-Web/email reads and command output mark the chat as containing untrusted data.
-Finances, memory reads and recognized credential/private-file paths mark it
-as containing private data. After outside reads, commands, edits, jobs, shared
+Web reads mark the chat as containing untrusted data. Email, shell output and
+unclassified tools are treated as potentially private and untrusted. Finances,
+memory reads and recognized credential/private-file paths mark it as private. Uploaded attachments are marked as both private and
+untrusted before the model sees them, including when steered or queued. After outside reads, commands, edits, jobs, shared
 memory changes, unknown tools and external writes require a specific owner
 approval. After private reads, outgoing requests (including browser navigation),
 shell commands and custom tools require approval. Local UI previews and ordinary
@@ -362,7 +363,8 @@ across compaction, idle unloading and restart; a new chat starts separately.
 Only rule/tool/chat IDs are logged, not tool arguments or private content.
 
 This is targeted protection, not OpenAPPA's formal engine or an OS sandbox.
-Arbitrary file names cannot reliably identify confidential content, extensions
+Arbitrary file names cannot reliably identify confidential content, and browser
+reads are not automatically classified for privacy. Extensions
 can perform their own I/O, and an approved shell command has the agent's full
 container privileges. Owner-installed code and model providers remain trusted;
 the owner can change policy or roll back the agent. The built-in checks reduce

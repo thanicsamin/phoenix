@@ -315,7 +315,7 @@ export class Host extends EventEmitter {
       await this.browserClosers?.get(id)?.();
       this.loaded.delete(id); this.chats.delete(id);
       await this.memoryQueue;
-      for (const file of [...this.files.items]) if (file.chatId === id) await this.files.remove(file.id, id);
+      for (const file of [...this.files.items]) if (file.chatId === id) await this.files.remove(file.id, id, true);
       for (const path of [join(this.dataDir, 'pi', 'sessions', id), join(this.dataDir, 'browser', id), join(this.workspace, 'uploads', id), join(this.workspace, 'memory', 'chats', id)]) await rm(path, { recursive: true, force: true });
       const previous = this.records;
       this.records = previous.filter(record => record.id !== id);
@@ -374,6 +374,7 @@ export class Host extends EventEmitter {
     if (this.closing) throw new Error('Agent is shutting down.');
     const chat = await this.getChat(id);
     const input = await this.files.prepare(message, attachmentIds, id, chat.session.model);
+    await this.markAttachments(id, attachmentIds);
     const pending = chat.pending;
     if (this.providerUpdating) throw Object.assign(Error('Provider settings are being updated. Try again shortly.'), { status: 409 });
     const result = chat.submit(input.message, source, input.images);
@@ -387,6 +388,7 @@ export class Host extends EventEmitter {
   async steer(message: string, id = 'main', attachmentIds: string[] = []) {
     const chat = await this.getChat(id);
     const input = await this.files.prepare(message, attachmentIds, id, chat.session.model);
+    await this.markAttachments(id, attachmentIds);
     const result = chat.steer(input.message, input.images);
     if (chat.steering.some(item => item.message === input.message)) this.sent(id);
     return result;
@@ -395,9 +397,16 @@ export class Host extends EventEmitter {
     const chat = await this.getChat(id);
     chat.editable(queueId, version);
     const input = await this.files.prepare(message, attachments, id, chat.session.model);
+    await this.markAttachments(id, attachments);
     const queued = chat.editable(queueId, version); // Upload preparation can yield to the running task.
     queued.message = input.message; queued.images = input.images; queued.version++;
     chat.changed();
+  }
+  async markAttachments(id: string, attachments: string[]) {
+    if (!attachments.length || !this.config.extensions?.permissions) return;
+    const record = this.record(id);
+    // Uploaded documents/images may contain private data and outside instructions.
+    if (record.readRisk !== 3) { record.readRisk = 3; await this.save(); }
   }
   async state(id = 'main'): Promise<ChatState> {
     const chat = await this.getChat(id);

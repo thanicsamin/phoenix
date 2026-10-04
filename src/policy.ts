@@ -11,10 +11,10 @@ export function isOwnerUI(url: unknown, port?: number) {
 export function readRisk(tool: string, input: Record<string, unknown>, ownUI: boolean) {
   if (tool === 'finance') return privateData | untrusted; // Merchant descriptions aren't instructions.
   if (tool === 'browser') return ownUI ? 0 : untrusted;
-  if (tool === 'email_read' || tool === 'bash' || tool === 'powershell') return untrusted;
+  if (tool === 'email_read' || tool === 'bash' || tool === 'powershell') return privateData | untrusted;
   if (tool === 'memory' && input.text === undefined && !['remember', 'summarize'].includes(String(input.action))) return privateData;
   if (inspect.has(tool) && /(?:^|[/\\])(?:USER\.md|MEMORY\.md|memory|uploads|attachments|\.ssh|auth\.json|models\.json|[^/\\]*\.env|[^/\\]*key)(?:[/\\]|$)/i.test(String(input.path || ''))) return privateData;
-  return inspect.has(tool) || ['write', 'edit', 'schedule', 'chat', 'attach_file', 'memory', 'reload_ui', 'rollback_ui', 'reload_agent', 'rollback_agent'].includes(tool) || tool.endsWith('_send') ? 0 : untrusted;
+  return inspect.has(tool) || ['write', 'edit', 'schedule', 'chat', 'attach_file', 'memory', 'reload_ui', 'rollback_ui', 'reload_agent', 'rollback_agent'].includes(tool) || tool.endsWith('_send') ? 0 : privateData | untrusted;
 }
 export function approvalReason(tool: string, input: Record<string, unknown>, risk: number, externalRun: boolean, ownUI: boolean) {
   const browser = tool === 'browser'; const action = String(input.action);
