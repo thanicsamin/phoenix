@@ -13,6 +13,7 @@ export const jobSchema = z.strictObject({
 export const modelSchema = z.strictObject({ provider: z.enum(['opencode', 'opencode-go']), id: z.string().min(1) });
 export const thinkingSchema = z.enum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
 const publicWebUrl = z.url().refine(value => {
+  if (!URL.canParse(value)) return false;
   const url = new URL(value);
   return url.protocol === 'https:' && !url.username && !url.password && url.pathname === '/' && !url.search && !url.hash;
 }, 'Use an HTTPS origin without credentials, a path, query, or fragment.');

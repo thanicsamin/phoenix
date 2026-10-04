@@ -26,8 +26,8 @@ test('direct web URL accepts a custom HTTPS port and rejects unsafe origins or a
   delete config.extensions.tunnel;
   config.extensions.web.url = 'https://203.0.113.10:24843';
   assert.equal(configSchema.parse(config).extensions.web.url, config.extensions.web.url);
-  for (const url of ['http://203.0.113.10:24843', 'https://user:password@example.com', 'https://example.com/chat', 'https://example.com/?key=secret', 'https://example.com/#chat']) {
-    assert.throws(() => configSchema.parse({ ...config, extensions: { ...config.extensions, web: { port: 8080, url } } }));
+  for (const url of ['not-a-url', 'http://203.0.113.10:24843', 'https://user:password@example.com', 'https://example.com/chat', 'https://example.com/?key=secret', 'https://example.com/#chat']) {
+    assert.equal(configSchema.safeParse({ ...config, extensions: { ...config.extensions, web: { port: 8080, url } } }).success, false);
   }
   assert.throws(() => configSchema.parse({ ...config, extensions: { ...config.extensions, tunnel: { mode: 'quick' } } }));
 });
