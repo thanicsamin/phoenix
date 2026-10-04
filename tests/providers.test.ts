@@ -9,6 +9,7 @@ import { configSchema } from '../src/config.ts';
 import { createAuth } from '../extensions/auth.ts';
 import { createWebServer } from '../extensions/web.ts';
 import { once } from 'node:events';
+import { parseEndpoint, saveEndpoint } from '../src/local-models.ts';
 
 test('provider keys survive restart, stay separate, and replace both legacy OpenCode overrides', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'phoenix-providers-'));
@@ -39,9 +40,9 @@ test('provider keys survive restart, stay separate, and replace both legacy Open
 test('provider key API requires owner login and CSRF, and never returns secrets', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'phoenix-provider-api-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const modelRuntime = await ModelRuntime.create({ authPath: join(directory, 'auth.json'), modelsPath: join(directory, 'models.json') });
+  const modelRuntime = await ModelRuntime.create({ authPath: join(directory, 'pi/auth.json'), modelsPath: join(directory, 'pi/models.json') });
   const auth = await createAuth(directory, { password: 'fixture-owner-password' });
-  const host = { auth, modelRuntime, changed() {} };
+  const host = { auth, modelRuntime, changed() {}, configureEndpoint: input => saveEndpoint(modelRuntime, directory, parseEndpoint(input)) };
   const server = createWebServer(host); server.listen(0, '127.0.0.1'); await once(server, 'listening'); host.port = server.address().port;
   t.after(() => { server.closeAllConnections(); server.close(); });
   const base = `http://127.0.0.1:${host.port}`;
@@ -59,4 +60,13 @@ test('provider key API requires owner login and CSRF, and never returns secrets'
   const saved = await post('/api/provider', body, headers); assert.equal(saved.status, 200);
   assert.deepEqual(await saved.json(), {});
   assert.equal((await modelRuntime.getAuth('openrouter')).auth.apiKey, body.apiKey);
+  const local = { provider: 'ollama', baseUrl: 'http://localhost:11434/v1', modelIds: ['fixture/model'], apiKey: 'fixture-private-server-key' };
+  assert.equal((await post('/api/provider', local)).status, 401);
+  assert.equal((await post('/api/provider', local, { Cookie: cookie })).status, 403);
+  assert.equal((await post('/api/provider', local, { ...headers, Origin: 'https://evil.example' })).status, 403);
+  assert.equal((await post('/api/provider', local, { Cookie: `phoenix=${preview.token}`, 'X-CSRF-Token': preview.csrf })).status, 403);
+  assert.equal((await post('/api/provider', { ...local, baseUrl: 'file:///etc/passwd' }, headers)).status, 400);
+  const localSaved = await post('/api/provider', local, headers);
+  const localResult = await localSaved.json(); assert.equal(localSaved.status, 200, JSON.stringify(localResult)); assert.deepEqual(localResult, {});
+  assert.ok(!JSON.stringify(providerChoices(modelRuntime)).includes(local.apiKey));
 });

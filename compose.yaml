@@ -3,6 +3,8 @@ services:
     build: .
     image: phoenix-agent:local
     init: true
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
     ports:
       - "127.0.0.1:8080:8080"

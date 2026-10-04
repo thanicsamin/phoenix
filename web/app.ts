@@ -105,6 +105,7 @@ function showLogin() {
   finances.reset(); cancelQueueEdit(); notifications.reset(); window.resetPreviews(true);
   drafts.clear(); draftMessages.clear(); $('#message').value = ''; $('#messages').replaceChildren();
   $('#api-key').value = ''; $('#key-error').textContent = ''; $('#provider-status').textContent = '';
+  $('#server-url').value = ''; $('#server-models').value = '';
   try { sessionStorage.removeItem('phoenix-drafts'); } catch { /* Storage may be disabled. */ }
   window.stopVoice?.(); document.querySelectorAll<HTMLDialogElement>('dialog[open]').forEach(dialog => dialog.close());
   closeChats(); clearTimeout(reconnect); socket?.close(); $('#login').hidden = false; $('#app').hidden = true;
@@ -120,14 +121,28 @@ function providerName(id: string) {
 }
 function providerStatus() {
   const provider = latest?.providers?.find(provider => provider.id === $('#provider').value);
-  $('#provider-status').textContent = provider ? provider.configured ? 'Key configured' : 'No key configured' : '';
+  $('#provider-status').textContent = provider ? provider.configured ? provider.server ? 'Server configured' : 'Key configured' : provider.server ? 'No server configured' : 'No key configured' : '';
+}
+function providerFields() {
+  const provider = latest?.providers?.find(provider => provider.id === $('#provider').value);
+  const server = provider?.server;
+  $('#server-fields').hidden = !server; $('#server-fields').disabled = !server;
+  $('#server-key-hint').hidden = !server;
+  $('#api-key').required = !server; $('#api-key').minLength = server ? 0 : 8;
+  $('#save-provider').textContent = server ? 'Save server' : 'Save key';
+  const port = ({ ollama: 11434, lmstudio: 1234, local: 8000 } as Record<string, number>)[provider?.id || ''];
+  $('#server-url').value = server?.baseUrl || (port ? `http://host.docker.internal:${port}/v1` : '');
+  $('#server-models').value = server?.modelIds.join(', ') || '';
+  $('#server-context').value = String(server?.contextWindow || 32768);
+  $('#server-vision').checked = server?.vision || false; $('#server-reasoning').checked = server?.reasoning || false;
+  providerStatus();
 }
 async function openSettings() {
   const generation = authGeneration;
   closeChats();
   $('#settings-model').textContent = latest ? `${providerName(latest.model.provider)} · ${latest.model.id}` : '';
   $('#provider').value = latest?.model.provider === 'opencode' ? 'opencode-go' : latest?.model.provider || 'opencode-go';
-  $('#api-key').value = ''; $('#key-error').textContent = ''; providerStatus();
+  $('#api-key').value = ''; $('#key-error').textContent = ''; providerFields();
   $('#settings-dialog').showModal();
   await finances.refresh();
   if (generation !== authGeneration) return;
@@ -373,12 +388,14 @@ $('#settings-dialog').addEventListener('cancel', async event => { event.preventD
 $('#key-form').addEventListener('submit', async event => {
   event.preventDefault(); const generation = authGeneration;
   const button = event.submitter as HTMLButtonElement;
-  button.disabled = true; $('#provider').disabled = true; $('#api-key').disabled = true;
-  try { await api('/api/provider', { provider: $('#provider').value, apiKey: $('#api-key').value }); $('#api-key').value = ''; $('#key-error').textContent = ''; $('#settings-dialog').close(); revision = -1; await refresh(); }
+  const server = !$('#server-fields').hidden;
+  const input = { provider: $('#provider').value, apiKey: $('#api-key').value, ...(server ? { baseUrl: $('#server-url').value, modelIds: $('#server-models').value.split(',').map(id => id.trim()).filter(Boolean), contextWindow: Number($('#server-context').value), vision: $('#server-vision').checked, reasoning: $('#server-reasoning').checked } : {}) };
+  button.disabled = true; $('#provider').disabled = true; $('#api-key').disabled = true; $('#server-fields').disabled = true;
+  try { await api('/api/provider', input); $('#api-key').value = ''; $('#key-error').textContent = ''; $('#settings-dialog').close(); revision = -1; await refresh(); }
   catch (caught) { if (generation === authGeneration) { const error = caught instanceof Error ? caught : new Error(String(caught)); $('#key-error').textContent = error.message; } }
-  finally { button.disabled = false; $('#provider').disabled = false; $('#api-key').disabled = false; }
+  finally { button.disabled = false; $('#provider').disabled = false; $('#api-key').disabled = false; $('#server-fields').disabled = Boolean($('#server-fields').hidden); }
 });
-$('#provider').addEventListener('change', () => { $('#api-key').value = ''; $('#key-error').textContent = ''; providerStatus(); });
+$('#provider').addEventListener('change', () => { $('#api-key').value = ''; $('#key-error').textContent = ''; providerFields(); });
 $('#logout').addEventListener('click', async () => { try { await api('/api/logout', {}); showLogin(); } catch (caught) { const error = caught instanceof Error ? caught : new Error(String(caught)); $('#agent-error').textContent = error.message; } });
 api('/api/session').then(result => { csrf = result.csrf; if (result.authenticated) showApp(); else showLogin(); }).catch(error => { showLogin(); $('#login-error').textContent = error.message; });
 $('#archived-chats').addEventListener('click', () => { showingArchived = !showingArchived; if (latest) render(latest); });

@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
 import { registerSecret } from './log.ts';
-import { apiKeyProviders } from './models.ts';
+import { modelProviders } from './models.ts';
 
 const envName = z.string().regex(/^[A-Z][A-Z0-9_]*$/);
 const users = z.array(z.string().min(1)).min(1);
@@ -11,7 +11,7 @@ export const jobSchema = z.strictObject({
   everyMinutes: z.number().int().min(0).max(525600).default(0),
   nextRunAt: z.iso.datetime().optional(),
 });
-export const modelSchema = z.strictObject({ provider: z.enum(apiKeyProviders), id: z.string().min(1) });
+export const modelSchema = z.strictObject({ provider: z.enum(modelProviders), id: z.string().min(1) });
 export const thinkingSchema = z.enum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
 const publicWebUrl = z.url().refine(value => {
   if (!URL.canParse(value)) return false;

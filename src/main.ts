@@ -5,7 +5,7 @@ import { resolve, join } from 'node:path';
 import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } from '@earendil-works/pi-coding-agent';
 import { loadConfig, secret } from './config.ts';
 import { Host } from './host.ts';
-import { configureOpenCode, openCodeSessionHeaders, apiKeyProviders } from './models.ts';
+import { configureOpenCode, openCodeSessionHeaders, modelProviders } from './models.ts';
 import { saveSetup } from './setup.ts';
 import { Generations } from './generations.ts';
 import { Interface } from './interface.ts';
@@ -52,7 +52,7 @@ async function start() {
   registerSecret(key.trim());
   const storedProviders = new Set((await modelRuntime.listCredentials()).map(entry => entry.providerId));
   if (key) for (const provider of ['opencode', 'opencode-go']) if (!storedProviders.has(provider)) await modelRuntime.setRuntimeApiKey(provider, key.trim());
-  for (const provider of apiKeyProviders) registerSecret((await modelRuntime.getAuth(provider))?.auth.apiKey || '');
+  for (const provider of modelProviders) registerSecret((await modelRuntime.getAuth(provider))?.auth.apiKey || '');
   const model = modelRuntime.getModel(config.model.provider, config.model.id);
   if (!model) throw new Error(`Unknown model: ${config.model.provider}/${config.model.id}. Choose a model supported by the pinned Pi version.`);
   host.modelRuntime = modelRuntime;

@@ -86,10 +86,19 @@
       <button id="close-settings" class="dialog-close" type="button" aria-label="Close settings">×</button>
       <h2>Settings</h2>
       <label for="provider">Provider</label><select id="provider"><option value="opencode-go">OpenCode Go / Zen</option><option value="openrouter">OpenRouter</option></select>
+      <fieldset id="server-fields" hidden disabled>
+        <label for="server-url">Server URL</label><input type="url" id="server-url" required placeholder="http://host.docker.internal:11434/v1">
+        <label for="server-models">Model IDs</label><input id="server-models" required placeholder="Model name, or comma-separated names">
+        <details><summary>Model options</summary>
+          <label for="server-context">Context tokens</label><input type="number" id="server-context" value="32768" min="4096" max="4194304" required>
+          <div class="provider-options"><label><input type="checkbox" id="server-vision"> Images</label><label><input type="checkbox" id="server-reasoning"> Thinking</label></div>
+        </details>
+      </fieldset>
       <label for="api-key">API key</label><input type="password" id="api-key" autocomplete="off" minlength="8" maxlength="4096" required>
+      <p id="server-key-hint" class="muted" hidden>Optional. Blank keeps the saved key for the same server.</p>
       <p id="provider-status" class="muted" role="status"></p>
       <p id="settings-model" class="muted"></p>
-      <button type="submit" class="primary">Save key</button>
+      <button id="save-provider" type="submit" class="primary">Save key</button>
       <p id="key-error" class="error" role="alert"></p>
     </form>
     <label for="theme">Theme</label><select id="theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select>

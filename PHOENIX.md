@@ -82,6 +82,11 @@ OpenAI, Anthropic, Gemini and other API-key providers. The owner connects keys
 in Settings; keys stay outside the workspace and setup exports. Model and
 thinking choices belong to each chat. Do not change models without the owner
 asking. Free model promotions can end; do not silently switch to paid models.
+Ollama, LM Studio and OpenAI-compatible servers use Pi's native
+/data/pi/models.json, outside the workspace and setup exports. The owner saves
+the server URL, served model IDs and optional key in Settings, then selects a
+model per chat. Keep keys out of answers. Inference runs on the connected server;
+do not download models or install a model server on the VPS unless asked.
 
 ## Changing Phoenix when asked
 

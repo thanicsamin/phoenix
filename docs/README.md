@@ -43,6 +43,50 @@ legacy `OPENCODE_API_KEY` path. Keys are not checked against a paid API until us
 Every model request identifies Phoenix. OpenCode requests send `x-opencode-session` with the
 conversation's persisted Pi ID, including compaction, retries and model changes.
 
+## Local model servers
+
+In Settings, choose **Ollama**, **LM Studio** or **OpenAI-compatible server**
+(vLLM, SGLang, llama.cpp, LocalAI, or another compatible endpoint). Enter the
+server's full API URL ending in `/v1` and its served model IDs, separated by
+commas. Save, then choose a model below the chat box. Saving a server keeps
+existing chat selections. Use a model that supports tool calls for agent tools.
+
+| Server | Default URL when Phoenix runs in Docker |
+| --- | --- |
+| Ollama | `http://host.docker.internal:11434/v1` |
+| LM Studio | `http://host.docker.internal:1234/v1` |
+| Other compatible server | `http://host.docker.internal:8000/v1` |
+
+The API key is optional for unauthenticated servers. Blank keeps a saved key
+for the same URL; changing the URL with a blank key clears the old server's key.
+Server settings and keys persist in private `/data/pi/models.json` (mode `0600`)
+using Pi's native client. They are excluded from setup exports. Connect the
+recipient's server before importing a setup that selects its models.
+
+Under **Model options**, set context tokens to match the server (default 32,768).
+This tells Pi when to compact; it does not increase the server's context or
+allocate model memory. Enable Images for vision models, and Thinking only if
+the endpoint accepts OpenAI `reasoning_effort`. For different capabilities per
+model, edit Pi's `models.json` directly.
+
+Docker's `host.docker.internal` reaches the computer running Docker; Compose
+also configures it on Linux. The model server must listen on an interface
+reachable from Docker. For Ollama, set `OLLAMA_HOST=0.0.0.0:11434` and
+`OLLAMA_CONTEXT_LENGTH=32768`, then restart it using the
+[instructions for your OS](https://docs.ollama.com/faq#how-do-i-configure-ollama-server).
+Keep unauthenticated servers on a private network. With native Phoenix, use
+`http://localhost:11434/v1` instead. With Phoenix on a VPS, this host name means
+the VPS; to use a model on your computer, provide a URL reachable through your
+private network or VPN. A model in another container can use its service name
+on a shared Docker network. Requests come from Phoenix, so browser CORS settings
+do not need changing.
+
+Phoenix does not download models or run an inference engine inside its container.
+The connected server supplies compute and model storage, keeping the VPS small.
+See [Ollama's API](https://docs.ollama.com/api/openai-compatibility),
+[LM Studio's API](https://lmstudio.ai/docs/developer/openai-compat) and
+[Docker host networking](https://docs.docker.com/reference/cli/docker/container/run/#add-host).
+
 ## Share your setup
 
 **Export setup** downloads instructions, personality files, the workspace flake,

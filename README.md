@@ -10,8 +10,8 @@ cd phoenix
 docker compose up --build
 ```
 
-The logs print your link and password. Sign in and add an API key in Settings.
-OpenCode Go/Zen, OpenRouter and other Pi providers are supported.
+The logs print your link and password. Connect a provider in Settings.
+OpenCode Go/Zen, OpenRouter, Ollama, LM Studio and other Pi providers are supported.
 
 - Separate chats, scheduled jobs and incoming email.
 - Browser automation with one-button owner control.

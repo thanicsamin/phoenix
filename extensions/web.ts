@@ -19,6 +19,7 @@ import { isIPv4 } from 'node:net';
 import { log } from '../src/log.ts';
 import { attachBrowserSocket } from './browser-socket.ts';
 import { saveProviderKey } from '../src/models.ts';
+import { localProviders } from '../src/local-models.ts';
 
 const files: Record<string, [URL, string]> = {
   '/': [new URL('../web/index.html', import.meta.url), 'text/html; charset=utf-8'],
@@ -310,8 +311,11 @@ export function createWebServer(host: Host, logger = log) {
       }
       if (request.method === 'POST' && path === '/api/provider') {
         if (auth.preview) return send(403, { error: 'Sign in as the owner to manage API keys.' });
-        const { provider = 'opencode-go', apiKey } = await readBody(request);
-        await saveProviderKey(host.modelRuntime, provider, apiKey);
+        const input = await readJson(request, 40000);
+        if (!input || typeof input !== 'object' || Array.isArray(input)) throw Object.assign(Error('Invalid provider settings.'), { status: 400 });
+        const { provider = 'opencode-go', apiKey } = input;
+        if ((localProviders as readonly unknown[]).includes(provider)) await host.configureEndpoint(input);
+        else await saveProviderKey(host.modelRuntime, provider, apiKey);
         host.changed(); return send(200, {});
       }
       return send(404, { error: 'Not found.' });

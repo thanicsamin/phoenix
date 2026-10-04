@@ -15,6 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile, writeFile, rename } from 'node:fs/promises';
 import { join } from 'node:path';
 import { modelChoices, providerChoices } from './models.ts';
+import { parseEndpoint, saveEndpoint } from './local-models.ts';
 import { jobSchema, modelSchema, thinkingSchema } from './config.ts';
 import { Files } from './files.ts';
 import { Workspace } from './workspace.ts';
@@ -171,6 +172,7 @@ export class Host extends EventEmitter {
   cleanups: Cleanup[] = []; sessionExtensions: NativeExtension[] = []; startedExtensions = new Set<string>();
   writeQueue: Promise<void>; files!: Files; workspaceFiles!: Workspace;
   createSession!: (id: string) => Promise<AgentSession>; modelRuntime!: ModelRuntime;
+  providerUpdating = false; providerWrite: Promise<void> = Promise.resolve();
   browserControls?: Map<string, BrowserControl>; internet?: Internet; plaid?: Plaid; auth!: Awaited<ReturnType<typeof createAuth>>;
   memoryQueue: Promise<unknown> = Promise.resolve(); display?: Promise<string>;
   browserPages?: Map<string, () => string | undefined>; browserClosers?: Map<string, Cleanup>;
@@ -251,6 +253,7 @@ export class Host extends EventEmitter {
   }
   async getChat(id = 'main') {
     this.record(id);
+    if (this.providerUpdating) await this.providerWrite;
     if (!this.chats.has(id)) {
       const pending = Promise.resolve().then(async () => {
         while (this.chats.size > 3) {
@@ -284,6 +287,7 @@ export class Host extends EventEmitter {
     const chat = await this.getChat(id);
     const input = await this.files.prepare(message, attachmentIds, id, chat.session.model);
     const pending = chat.pending;
+    if (this.providerUpdating) throw Object.assign(Error('Provider settings are being updated. Try again shortly.'), { status: 409 });
     const result = chat.submit(input.message, source, input.images);
     if (source === 'web' && chat.pending > pending) this.sent(id);
     return result;
@@ -320,19 +324,36 @@ export class Host extends EventEmitter {
     })) };
   }
   async setModel(chatId: string, input: { model?: unknown; thinking?: unknown }) {
+    if (this.providerUpdating) throw Object.assign(Error('Provider settings are being updated. Try again shortly.'), { status: 409 });
     const selection = modelSchema.safeParse(input.model);
     const thinking = thinkingSchema.safeParse(input.thinking);
     if (!selection.success || !thinking.success) throw Object.assign(new Error('Choose a valid model and thinking level.'), { status: 400 });
+    const chat = await this.getChat(chatId);
+    if (this.providerUpdating) throw Object.assign(Error('Provider settings are being updated. Try again shortly.'), { status: 409 });
+    if (chat.pending) throw Object.assign(new Error('Wait for this chat to finish.'), { status: 409 });
     const model = this.modelRuntime.getModel(selection.data.provider, selection.data.id);
     if (!model) throw Object.assign(new Error('Unknown model.'), { status: 400 });
-    if (!this.modelRuntime.hasConfiguredAuth(model.provider)) throw Object.assign(new Error('Connect a key for this provider in Settings first.'), { status: 400 });
-    const chat = await this.getChat(chatId);
-    if (chat.pending) throw Object.assign(new Error('Wait for this chat to finish.'), { status: 409 });
+    if (!this.modelRuntime.hasConfiguredAuth(model.provider)) throw Object.assign(new Error('Connect a provider in Settings first.'), { status: 400 });
     await chat.session.setModel(model);
     chat.session.setThinkingLevel(thinking.data);
     const record = this.record(chatId);
     record.model = selection.data; record.thinking = chat.session.thinkingLevel;
     chat.error = ''; await this.save();
+  }
+  configureEndpoint(input: unknown) {
+    const endpoint = parseEndpoint(input);
+    if (this.closing || this.restarting || this.providerUpdating || [...this.chats.keys()].some(id => !this.loaded.has(id)) || [...this.loaded.values()].some(chat => chat.pending)) throw Object.assign(Error('Wait for active chats or provider changes to finish.'), { status: 409 });
+    const selections = [this.config.model, ...this.records.map(chat => chat.model).filter(model => model !== undefined), ...[...this.loaded.values()].map(chat => chat.session.model).filter(model => model !== undefined)];
+    if (selections.some(model => model.provider === endpoint.provider && !endpoint.modelIds.includes(model.id))) throw Object.assign(Error('Change chats using a model before removing it from this server.'), { status: 409 });
+    this.providerUpdating = true;
+    this.providerWrite = (async () => {
+      await saveEndpoint(this.modelRuntime, this.dataDir, endpoint);
+      for (const chat of this.loaded.values()) if (chat.session.model?.provider === endpoint.provider) {
+        await chat.session.setModel(this.modelRuntime.getModel(endpoint.provider, chat.session.model.id)!);
+      }
+      this.changed();
+    })().finally(() => { this.providerUpdating = false; });
+    return this.providerWrite;
   }
   jobRecord(input: unknown): Job {
     const job = jobSchema.parse(input);
@@ -368,6 +389,7 @@ export class Host extends EventEmitter {
   async close() {
     this.closing = true;
     for (const control of this.browserControls?.values() || []) await control.close();
+    await this.providerWrite.catch(() => {});
     for (const approval of [...this.approvals.values()]) await this.approve(approval.id, false);
     for (const pending of this.chats.values()) {
       const chat = await pending.catch(() => undefined);

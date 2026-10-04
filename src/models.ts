@@ -1,11 +1,20 @@
 import type { ModelRuntime, ExtensionFactory } from '@earendil-works/pi-coding-agent';
 import { registerSecret } from './log.ts';
+import { localProviders, localProviderNames } from './local-models.ts';
 export const openCodeProviders = ['opencode-go', 'opencode'];
 // Providers whose native Pi setup needs only an API key.
 export const apiKeyProviders = ['opencode-go', 'opencode', 'openrouter', 'openai', 'anthropic', 'google', 'xai', 'groq', 'mistral', 'deepseek', 'moonshotai', 'minimax', 'zai'] as const;
+export const modelProviders = [...apiKeyProviders, ...localProviders] as const;
 
 export function providerChoices(runtime: ModelRuntime) {
-  return apiKeyProviders.map(id => ({ id, name: runtime.getProvider(id)?.name || id, configured: runtime.hasConfiguredAuth(id) }));
+  return modelProviders.map(id => {
+    const local = (localProviders as readonly string[]).includes(id);
+    const models = local ? runtime.getModels(id) : [];
+    const first = models[0];
+    return { id, name: local ? localProviderNames[id as typeof localProviders[number]] : runtime.getProvider(id)?.name || id,
+      configured: runtime.hasConfiguredAuth(id), ...(local ? { server: { baseUrl: first?.baseUrl || '', modelIds: models.map(model => model.id), contextWindow: first?.contextWindow || 32768, vision: first?.input.includes('image') || false, reasoning: first?.reasoning || false } } : {}),
+    };
+  });
 }
 
 export async function saveProviderKey(runtime: ModelRuntime, provider: unknown, input: unknown) {
@@ -47,7 +56,7 @@ export function configureOpenCode(runtime: ModelRuntime) {
 }
 
 export function modelChoices(runtime: ModelRuntime, current?: { provider: string; id: string }) {
-  return apiKeyProviders.flatMap(provider => {
+  return modelProviders.flatMap(provider => {
     const configured = runtime.hasConfiguredAuth(provider);
     return runtime.getModels(provider).filter(model => configured || (current?.provider === provider && current.id === model.id)).map(({ id, name }) => ({ provider, id, name }));
   });

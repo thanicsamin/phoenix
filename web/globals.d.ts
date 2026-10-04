@@ -83,6 +83,14 @@ interface Elements {
   '#api-key': HTMLInputElement;
   '#provider': HTMLSelectElement;
   '#provider-status': HTMLElement;
+  '#server-fields': HTMLFieldSetElement;
+  '#server-url': HTMLInputElement;
+  '#server-models': HTMLInputElement;
+  '#server-context': HTMLInputElement;
+  '#server-vision': HTMLInputElement;
+  '#server-reasoning': HTMLInputElement;
+  '#server-key-hint': HTMLElement;
+  '#save-provider': HTMLButtonElement;
   '#settings-model': HTMLElement;
   '#key-error': HTMLElement;
   '#theme': HTMLSelectElement;
