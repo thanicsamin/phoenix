@@ -36,7 +36,7 @@ function persistDrafts() {
 }
 function sizeComposer() { const input = $('#message'); input.style.height = 'auto'; input.style.height = `${Math.min(input.scrollHeight, 200)}px`; }
 function refreshInterface() {
-  if (!pendingUI || document.querySelector('dialog[open]') || queueEdit || uploading || mutations || $('#microphone').getAttribute('aria-pressed') === 'true') return;
+  if (!pendingUI || finances.active() || document.querySelector('dialog[open]') || queueEdit || uploading || mutations || $('#microphone').getAttribute('aria-pressed') === 'true') return;
   persistDrafts(); location.reload();
 }
 function checkInterface(version?: string) {

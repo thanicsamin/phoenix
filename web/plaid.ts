@@ -123,5 +123,5 @@ window.initPlaid = ({ api }: { api: API }) => {
     busy = true;
     try { await start(link, receivedRedirectUri); } catch (error) { busy = false; message(error); }
   };
-  return { refresh, resume, reset: () => { controllerGeneration++; busy = false; handler?.destroy(); handler = undefined; pendingSave = undefined; retry.hidden = true; secret.value = clientId.value = ''; clearPending(); get('plaid-items').replaceChildren(); } };
+  return { refresh, resume, active: () => busy || !!pendingSave, reset: () => { controllerGeneration++; busy = false; handler?.destroy(); handler = undefined; pendingSave = undefined; retry.hidden = true; secret.value = clientId.value = ''; clearPending(); get('plaid-items').replaceChildren(); } };
 };

@@ -4,6 +4,7 @@ import { once } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { chromium } from 'patchright-core';
 import { Host } from '../src/host.ts';
 import { loadConfig } from '../src/config.ts';
@@ -14,6 +15,7 @@ import { createWebServer } from '../extensions/web.ts';
 const data = await mkdtemp(join(tmpdir(), 'phoenix-plaid-ui-'));
 const host = new Host(await loadConfig('agent.json'), data, join(data, 'workspace')); await host.initialize();
 host.auth = await createAuth(data, { password: 'plaid-ui-fixture-password' });
+host.ui = { root: fileURLToPath(new URL('../web/', import.meta.url)), version: 'fixture-v1' };
 const calls = []; let sequence = 0; let failExchange = false;
 host.plaid = await Plaid.open(data, host.config.extensions.plaid, async (url, init) => {
   const body = JSON.parse(init.body); const path = new URL(url).pathname; calls.push({ path, body });
@@ -21,7 +23,7 @@ host.plaid = await Plaid.open(data, host.config.extensions.plaid, async (url, in
   return Response.json(path === '/link/token/create' ? { link_token: `link-${++sequence}`, expiration: new Date(Date.now() + 3600000).toISOString() } : path === '/item/public_token/exchange' ? { item_id: `item-${sequence}`, access_token: `private-${sequence}` } : {});
 });
 // Only state is needed; this fixture never invokes a real model or bank.
-host.state = async () => ({ revision: host.revision, chatId: 'main', name: 'Phoenix', pending: 0, messages: [], current: '', tool: '', error: '', extensions: { plaid: 'ready' }, model: { id: 'space-bunny-free', provider: 'opencode-go' }, hasKey: true, thinking: 'off', models: [], chats: [{ id: 'main', title: 'Main chat', pending: 0, notice: {} }], jobs: [], approvals: [], uiVersion: '', workspace: { app: 'phoenix' } });
+host.state = async () => ({ revision: host.revision, chatId: 'main', name: 'Phoenix', pending: 0, messages: [], current: '', tool: '', error: '', extensions: { plaid: 'ready' }, model: { id: 'space-bunny-free', provider: 'opencode-go' }, hasKey: true, thinking: 'off', models: [], chats: [{ id: 'main', title: 'Main chat', pending: 0, notice: {} }], jobs: [], approvals: [], uiVersion: host.ui.version, workspace: { app: 'phoenix' } });
 const server = createWebServer(host); server.listen(0, '127.0.0.1'); await once(server, 'listening'); host.port = server.address().port;
 const base = `http://127.0.0.1:${host.port}`;
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium', headless: true, chromiumSandbox: false });
@@ -45,6 +47,8 @@ try {
   await page.getByRole('button', { name: 'Connect bank', exact: true }).click(); await clickBank('Cancel');
   await page.locator('#settings-dialog').waitFor({ state: 'visible' }); assert.equal(host.plaid.status().items.length, 0);
   await page.getByRole('button', { name: 'Connect bank', exact: true }).click(); await page.locator('#settings-dialog').waitFor({ state: 'hidden' }); assert.equal(await page.locator('#settings-dialog').isVisible(), false, 'Settings modal blocked the Plaid iframe');
+  host.ui.version = 'fixture-v2'; host.changed(); await page.locator('#refresh-ui').waitFor({ state: 'visible' });
+  assert.equal(await page.locator('iframe[title="Bank sign-in"]').isVisible(), true, 'UI update interrupted bank sign-in');
   failExchange = true; await clickBank('Complete sign-in'); await page.getByRole('button', { name: 'Retry saving connection', exact: true }).waitFor({ state: 'visible' });
   assert.equal(host.plaid.status().items.length, 0); failExchange = false; await page.getByRole('button', { name: 'Retry saving connection', exact: true }).click();
   await page.locator('#plaid-items').getByText('Fixture bank', { exact: true }).waitFor({ state: 'visible' }); assert.equal(host.plaid.status().items.length, 1);

@@ -152,7 +152,7 @@ declare global {
     renderMarkdown: (text: string) => DocumentFragment | HTMLElement;
     previewPDF: (image: HTMLImageElement, url: string) => void;
     resetPreviews: (clear?: boolean) => void;
-    initPlaid: (options: { api: API }) => { refresh: () => Promise<void>; resume: () => Promise<void>; reset: () => void };
+    initPlaid: (options: { api: API }) => { refresh: () => Promise<void>; resume: () => Promise<void>; reset: () => void; active: () => boolean };
     Plaid?: { create: (options: { token: string; receivedRedirectUri?: string; onSuccess: (publicToken: string | null, metadata: { institution?: { name?: string } | null }) => void; onExit: (error: { error_code?: string } | null) => void }) => { open: () => void; destroy: () => void } };
     initBrowserControl: (options: { api: API; chat: () => string; csrf: () => string; refresh: () => Promise<void> }) => void;
     openBrowser: (take?: boolean) => void;
