@@ -3,7 +3,7 @@ import { resolve, join } from 'node:path';
 import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } from '@earendil-works/pi-coding-agent';
 import { loadConfig, secret } from './config.js';
 import { Host } from './host.js';
-import { configureOpenCode } from './models.js';
+import { configureOpenCode, openCodeSessionHeaders } from './models.js';
 import { saveSetup } from './setup.js';
 import { Generations } from './generations.js';
 import { Interface } from './interface.js';
@@ -53,11 +53,13 @@ async function start() {
   if (!model) throw new Error(`Unknown OpenCode model: ${config.model.id}. Choose a model supported by the pinned Pi version.`);
   host.modelRuntime = modelRuntime;
   host.createSession = async id => {
+    const sessionManager = SessionManager.continueRecent(workspace, join(agentDir, 'sessions', id));
     const factories = [...host.sessionExtensions];
     for (const [name, options] of Object.entries(config.extensions)) {
       if (id !== 'main' && processExtensions.has(name)) continue;
       factories.push(pi => modules.get(name)(pi, host, options, id));
     }
+    factories.push(openCodeSessionHeaders(sessionManager.getSessionId()));
     const settingsManager = SettingsManager.inMemory({ retry: { enabled: true, maxRetries: 2 } });
     const resourceLoader = new DefaultResourceLoader({
       cwd: workspace, agentDir, settingsManager,
@@ -71,7 +73,7 @@ async function start() {
     const { session } = await createAgentSession({
       cwd: workspace, agentDir, model: modelRuntime.getModel((host.record(id).model || config.model).provider, (host.record(id).model || config.model).id) || model,
       thinkingLevel: host.record(id).thinking, modelRuntime, resourceLoader, settingsManager,
-      sessionManager: SessionManager.continueRecent(workspace, join(agentDir, 'sessions', id)),
+      sessionManager,
     });
     return session;
   };

@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { attachWebSocket } from './websocket.js';
 import { lifecycle } from '../src/host.js';
 import { randomUUID } from 'node:crypto';
+import { isIPv4 } from 'node:net';
 import { log, registerSecret } from '../src/log.js';
 import { attachBrowserSocket } from './browser-socket.js';
 
@@ -264,6 +265,13 @@ export default function web(pi, host, options) {
   let server;
   lifecycle(pi, host, 'web', async () => {
     if (!host.auth) throw new Error('Authentication extension is required.');
+    if (process.env.PHOENIX_PUBLIC_IP) {
+      const port = Number(process.env.PHOENIX_HTTPS_PORT || 24843);
+      if (!isIPv4(process.env.PHOENIX_PUBLIC_IP) || !Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Set a valid PHOENIX_PUBLIC_IP and PHOENIX_HTTPS_PORT.');
+      if (host.config?.extensions.tunnel) throw new Error('Choose direct HTTPS or a tunnel.');
+      host.publicUrl = `https://${process.env.PHOENIX_PUBLIC_IP}:${port}`;
+    }
+    if (options.url) host.publicUrl = options.url;
     server = createWebServer(host);
     server.requestTimeout = 15000;
     server.headersTimeout = 10000;
@@ -272,6 +280,6 @@ export default function web(pi, host, options) {
       server.listen(options.port, process.env.PHOENIX_BIND || '127.0.0.1', resolve);
     });
     host.port = server.address().port;
-    log.info('web.ready', { url: `http://localhost:${host.port}` });
+    log.info('web.ready', { url: host.publicUrl || `http://localhost:${host.port}` });
   }, () => server && new Promise(resolve => { server.closeWebSockets(); server.close(resolve); server.closeAllConnections(); }));
 }

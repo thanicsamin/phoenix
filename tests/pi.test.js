@@ -1,5 +1,5 @@
 import test from 'node:test';
-import { configureOpenCode } from '../src/models.js';
+import { configureOpenCode, openCodeSessionHeaders } from '../src/models.js';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
@@ -14,7 +14,7 @@ test('real Pi streams through Zen and Go APIs and restores separate histories', 
   const requests = [];
   const server = createServer(async (request, response) => {
     let body = ''; for await (const chunk of request) body += chunk;
-    requests.push({ path: request.url, auth: request.headers.authorization || `Bearer ${request.headers['x-api-key']}`, body: JSON.parse(body) });
+    requests.push({ path: request.url, auth: request.headers.authorization || `Bearer ${request.headers['x-api-key']}`, session: request.headers['x-opencode-session'], agent: request.headers['user-agent'], body: JSON.parse(body) });
     response.writeHead(200, { 'Content-Type': 'text/event-stream' });
     if (request.url.startsWith('/v1/messages')) {
       const events = [
@@ -43,16 +43,18 @@ test('real Pi streams through Zen and Go APIs and restores separate histories', 
     assert.ok(modelRuntime.getModels('opencode-go').length > 1);
     await modelRuntime.setRuntimeApiKey(provider, 'test-opencode-api-key');
     const model = { ...modelRuntime.getModel(provider, id), baseUrl: `http://127.0.0.1:${server.address().port}${provider === 'opencode-go' ? '' : '/v1'}` };
-    const settingsManager = SettingsManager.inMemory({ retry: { enabled: false } });
+    const settingsManager = SettingsManager.inMemory({ retry: { enabled: false }, compaction: { keepRecentTokens: 1, reserveTokens: 128 } });
+    const sessionDir = join(agentDir, 'sessions');
+    const sessionManager = SessionManager.continueRecent(directory, sessionDir);
+    const sessionId = sessionManager.getSessionId();
     let extensionStarted = false;
     const resourceLoader = new DefaultResourceLoader({ cwd: directory, agentDir, settingsManager,
       noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
-      extensionFactories: [pi => pi.on('session_start', () => { extensionStarted = true; })],
+      extensionFactories: [pi => pi.on('session_start', () => { extensionStarted = true; }), openCodeSessionHeaders(sessionId)],
     });
     await resourceLoader.reload();
-    const sessionDir = join(agentDir, 'sessions');
     const { session } = await createAgentSession({ cwd: directory, agentDir, model, modelRuntime, settingsManager, resourceLoader,
-      noTools: true, sessionManager: SessionManager.continueRecent(directory, sessionDir) });
+      noTools: true, sessionManager });
     await session.bindExtensions({ mode: 'sdk' });
     assert.equal(extensionStarted, true);
     let streamed = '';
@@ -64,13 +66,25 @@ test('real Pi streams through Zen and Go APIs and restores separate histories', 
       session.setThinkingLevel('high');
       assert.equal(session.thinkingLevel, 'high');
     }
+    await session.setModel({ ...model, id: `${id}-switched` });
+    await session.prompt('Second turn');
+    await session.waitForIdle();
+    await session.compact();
     session.dispose();
-    const restored = SessionManager.continueRecent(directory, sessionDir).buildSessionContext().messages;
-    assert.equal(restored.filter(message => message.role === 'user').length, 1);
-    assert.match(JSON.stringify(restored), new RegExp(`Hello ${provider}`));
+    const restoredManager = SessionManager.continueRecent(directory, sessionDir);
+    assert.equal(restoredManager.getSessionId(), sessionId);
+    await resourceLoader.reload();
+    const { session: restored } = await createAgentSession({ cwd: directory, agentDir, model, modelRuntime, settingsManager, resourceLoader,
+      noTools: true, sessionManager: restoredManager });
+    await restored.bindExtensions({ mode: 'sdk' });
+    await restored.prompt('After restart'); await restored.waitForIdle(); restored.dispose();
+    const chatRequests = requests.filter(request => request.body.model === id || request.body.model === `${id}-switched`);
+    assert.ok(chatRequests.length >= 4, 'Includes normal turns, compaction and restart');
+    assert.ok(chatRequests.every(request => request.session === sessionId));
+    assert.ok(chatRequests.every(request => request.agent === 'phoenix-agent/0.1.0'));
   }
-  assert.equal(requests.length, 2);
-  assert.deepEqual(requests.map(request => request.path.split('?')[0]), ['/v1/chat/completions', '/v1/messages']);
+  assert.deepEqual([...new Set(requests.map(request => request.path.split('?')[0]))], ['/v1/chat/completions', '/v1/messages']);
+  assert.equal(new Set(requests.map(request => request.session)).size, 2, 'Separate chats have distinct IDs');
   assert.ok(requests.every(request => request.auth === 'Bearer test-opencode-api-key'));
 });
 

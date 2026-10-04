@@ -6,8 +6,60 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createAuth } from '../extensions/auth.js';
-import { createWebServer } from '../extensions/web.js';
+import web, { createWebServer } from '../extensions/web.js';
 import { createLogger } from '../src/log.js';
+
+test('direct HTTPS origin preserves login, secure cookies and host checks on a custom port', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'phoenix-direct-'));
+  const host = { auth: await createAuth(directory, { password: 'direct-test-password' }), cleanups: [], extensions: {}, changed() {} };
+  let start;
+  web({ on(event, callback) { if (event === 'session_start') start = callback; } }, host, { port: 0, url: 'https://203.0.113.10:24843' });
+  await start();
+  t.after(async () => { for (const cleanup of host.cleanups) await cleanup(); await rm(directory, { recursive: true, force: true }); });
+  assert.equal(host.publicUrl, 'https://203.0.113.10:24843');
+  const call = (path, headers, body) => new Promise((resolve, reject) => {
+    const req = request({ host: '127.0.0.1', port: host.port, path, method: body ? 'POST' : 'GET', headers }, res => {
+      res.resume(); res.on('end', () => resolve({ status: res.statusCode, cookie: res.headers['set-cookie']?.[0] }));
+    });
+    req.on('error', reject); req.end(body ? JSON.stringify(body) : undefined);
+  });
+  const headers = { Host: '203.0.113.10:24843', Origin: host.publicUrl, 'Content-Type': 'application/json' };
+  assert.equal((await call('/health', headers)).status, 200);
+  assert.equal((await call('/api/state', headers)).status, 401);
+  const login = await call('/api/login', headers, { password: 'direct-test-password' });
+  assert.equal(login.status, 200); assert.match(login.cookie, /; Secure$/);
+  assert.equal((await call('/api/login', { ...headers, Origin: 'https://evil.example' }, { password: 'direct-test-password' })).status, 403);
+  assert.equal((await call('/health', { Host: '203.0.113.10:8080' })).status, 403);
+});
+
+test('VPS environment selects the default public port, honors an override, and rejects invalid addresses', async t => {
+  const original = { ip: process.env.PHOENIX_PUBLIC_IP, port: process.env.PHOENIX_HTTPS_PORT };
+  t.after(() => {
+    for (const [name, value] of [['PHOENIX_PUBLIC_IP', original.ip], ['PHOENIX_HTTPS_PORT', original.port]]) {
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    }
+  });
+  process.env.PHOENIX_PUBLIC_IP = '203.0.113.10'; delete process.env.PHOENIX_HTTPS_PORT;
+  const directory = await mkdtemp(join(tmpdir(), 'phoenix-public-env-'));
+  const auth = await createAuth(directory, { password: 'public-env-test-password' });
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  for (const [port, expected] of [[undefined, 'https://203.0.113.10:24843'], ['26443', 'https://203.0.113.10:26443'], ['99999', undefined]]) {
+    if (port === undefined) delete process.env.PHOENIX_HTTPS_PORT; else process.env.PHOENIX_HTTPS_PORT = port;
+    const host = { auth, config: { extensions: {} }, cleanups: [], extensions: {}, changed() {} };
+    let start;
+    web({ on(event, callback) { if (event === 'session_start') start = callback; } }, host, { port: 0 });
+    await start();
+    assert.equal(host.publicUrl, expected);
+    assert.equal(host.extensions.web, expected ? 'ready' : 'failed');
+    for (const cleanup of host.cleanups) await cleanup();
+  }
+  process.env.PHOENIX_PUBLIC_IP = '203.0.113.10/evil';
+  const host = { auth, cleanups: [], extensions: {}, changed() {} };
+  let start;
+  web({ on(event, callback) { if (event === 'session_start') start = callback; } }, host, { port: 0 });
+  await start(); assert.equal(host.extensions.web, 'failed');
+  for (const cleanup of host.cleanups) await cleanup();
+});
 
 test('web gates agent/config access, checks origin and CSRF, accepts only valid prompts', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'phoenix-web-'));

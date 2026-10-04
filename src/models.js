@@ -1,5 +1,17 @@
 export const openCodeProviders = ['opencode-go', 'opencode'];
 
+// Pi's auxiliary requests can omit its session ID. Apply the conversation ID
+// at the HTTP boundary so retries, compaction and model changes share it too.
+export function openCodeSessionHeaders(sessionId) {
+  return pi => pi.on('before_provider_headers', ({ headers }) => {
+    for (const name of Object.keys(headers)) {
+      if (['x-opencode-session', 'user-agent'].includes(name.toLowerCase())) delete headers[name];
+    }
+    headers['x-opencode-session'] = sessionId;
+    headers['User-Agent'] = 'phoenix-agent/0.1.0';
+  });
+}
+
 export function configureOpenCode(runtime) {
   // Pi 1.0.0 lists MiniMax M2.7 with the old protocol. OpenCode now requires
   // /v1/messages: https://opencode.ai/v2/docs/console/go#endpoints

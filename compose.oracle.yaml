@@ -2,3 +2,6 @@
 services:
   phoenix:
     platform: linux/arm64
+    ports: !reset []
+  https:
+    profiles: !reset []

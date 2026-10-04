@@ -24,6 +24,8 @@ The default is OpenCode Go / Space Bunny Free while its free preview is availabl
 Pick a model and thinking level below the message box. Each chat remembers its
 own choices, including for its scheduled jobs. Both OpenCode Go and Zen are
 supported; no other model providers are enabled.
+Every model request identifies Phoenix and sends `x-opencode-session` with the
+conversation's persisted Pi ID, including compaction, retries and model changes.
 
 ## Share your setup
 
@@ -151,20 +153,35 @@ in the runtime or added to its Nix package list.
 
 ## Browser links
 
-The default Cloudflare Quick Tunnel prints a random HTTPS address without a
-Cloudflare account. The address changes on restart and has no uptime guarantee.
-[Quick Tunnel documentation](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/).
+Local Docker use opens `http://localhost:8080`. VPS use defaults to direct HTTPS
+on **24843**, without a Cloudflare account or a domain. Set
+`PHOENIX_PUBLIC_IP=YOUR_PUBLIC_IPV4` in `.env`. Oracle's Compose override enables
+the HTTPS proxy automatically; on other VPS hosts also set `COMPOSE_PROFILES=public`.
+Change `PHOENIX_HTTPS_PORT` in `.env` if that port is already in use.
 
-For a stable VPS link, create a named tunnel routing to `http://localhost:8080`,
-set `CLOUDFLARE_TUNNEL_TOKEN`, and use:
+Open TCP port **24843** in the VPS firewall and cloud network rules, plus **80**
+for certificate validation. The application is served only through HTTPS; port
+80 returns 404 except for certificate challenges. Caddy automatically obtains
+and renews a trusted, short-lived IP certificate, storing it on disk. The small
+proxy has a 128 MB memory cap; Phoenix keeps its 2 GB cap. Oracle does not publish
+the agent's private HTTP port at all.
+
+If you already use port 80 for another site, route Phoenix through your existing
+HTTPS proxy instead. Set `web.url` to that proxy's HTTPS origin (including any
+custom port); this preserves the HTTP and WebSocket origin checks. Do not publish
+the application's unencrypted port publicly.
+
+Cloudflare is optional. Add `"tunnel": { "mode": "quick" }` to `agent.json` for a
+random HTTPS link that changes on restart. For a stable domain, use a named tunnel,
+set `CLOUDFLARE_TUNNEL_TOKEN`, and declare:
 
 ```json
 "tunnel": { "mode": "named", "url": "https://agent.example.com" }
 ```
 
-Remove `tunnel` to use Phoenix locally. The native server listens on loopback;
-Docker publishes to host loopback. A configured public tunnel hostname is
-allowed through the HTTP and WebSocket host checks.
+Choose either direct HTTPS or a tunnel. For a tunnel, leave `PHOENIX_PUBLIC_IP`
+unset and do not enable the public proxy.
+[Quick Tunnel documentation](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/).
 
 Browser automation uses [Patchright](https://github.com/Kaliiiiiiiiii-Vinyzu/patchright-nodejs)
 with persistent, headed Chromium on a virtual display. This addresses known
@@ -361,23 +378,24 @@ Check the Always Free allocation shown in your console before provisioning.
 Availability is region-dependent; Oracle may reclaim idle free instances.
 Keep backups of the persistent data and Nix store/state volumes for recovery.
 
-With Docker Compose installed and this checkout on the instance:
+With Docker Compose installed and this checkout on the instance, set
+`PHOENIX_PUBLIC_IP` in `.env` and allow TCP ports 24843 and 80:
 
 ```sh
 docker compose -f compose.yaml -f compose.oracle.yaml up --build -d
 ```
 
-The override selects a native ARM64 build and caps Phoenix at one CPU. The
+The override selects a native ARM64 build and enables direct HTTPS on port 24843. The
 same Nix runtime runs inside the container; you do not need to replace the VPS
 host OS. Retrieve the browser link and initial password with
-`docker compose logs phoenix`. Cloudflare connects outward, so Phoenix's web
-port can stay on loopback; no extra public application port is required.
+`docker compose logs phoenix`. The private application port is unpublished;
+the HTTPS proxy forwards browser traffic and WebSockets internally.
 
 The pinned base image and Nix flake support both AMD64 and ARM64. CI builds and
 smoke-tests the container on native Linux runners for both architectures, with
 one CPU and 1 GiB smoke-test caps; the default deployment budget is 2 GiB. The connector has separate Windows/macOS jobs. Native
-Oracle provisioning and ARM execution still need a real ARM host; the local
-preview and live tests here run on AMD64.
+Oracle deployment has also been verified on an A1 ARM host; the local preview
+runs on AMD64.
 
 ## Resource limits and logs
 

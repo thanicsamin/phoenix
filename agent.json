@@ -15,10 +15,7 @@
     "files": {},
     "system": {},
     "permissions": {},
-    "scheduler": {},
-    "tunnel": {
-      "mode": "quick"
-    }
+    "scheduler": {}
   },
   "pi": {
     "extensions": [],

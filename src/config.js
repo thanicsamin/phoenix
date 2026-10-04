@@ -12,6 +12,10 @@ export const jobSchema = z.strictObject({
 });
 export const modelSchema = z.strictObject({ provider: z.enum(['opencode', 'opencode-go']), id: z.string().min(1) });
 export const thinkingSchema = z.enum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+const publicWebUrl = z.url().refine(value => {
+  const url = new URL(value);
+  return url.protocol === 'https:' && !url.username && !url.password && url.pathname === '/' && !url.search && !url.hash;
+}, 'Use an HTTPS origin without credentials, a path, query, or fragment.');
 export const configSchema = z.strictObject({
   name: z.string().min(1).max(60).default('Phoenix'),
   model: modelSchema,
@@ -19,7 +23,7 @@ export const configSchema = z.strictObject({
   workspace: z.strictObject(Object.fromEntries(['AGENTS.md', 'SOUL.md', 'IDENTITY.md', 'TOOLS.md', 'nix/flake.nix', 'nix/flake.lock'].map(name => [name, z.string().max(20000).optional()]))).default({}),
   extensions: z.strictObject({
     auth: z.strictObject({}).default({}),
-    web: z.strictObject({ port: z.number().int().min(0).max(65535).default(8080) }).default({ port: 8080 }),
+    web: z.strictObject({ port: z.number().int().min(0).max(65535).default(8080), url: publicWebUrl.optional() }).default({ port: 8080 }),
     browser: z.strictObject({ headless: z.boolean().optional() }).optional(),
     internet: z.strictObject({}).default({}),
     memory: z.strictObject({}).default({}),
@@ -39,6 +43,9 @@ export const configSchema = z.strictObject({
   pi: z.strictObject({ extensions: z.array(z.string()).default([]), skills: z.array(z.string()).default([]) }).default({ extensions: [], skills: [] }),
   chats: z.array(z.strictObject({ name: z.string().min(1).max(100), model: modelSchema.optional(), thinking: thinkingSchema.optional(), jobs: z.array(jobSchema).default([]) })).max(100).default([]),
 }).superRefine((config, ctx) => {
+  if (config.extensions.web.url && config.extensions.tunnel) {
+    ctx.addIssue({ code: 'custom', path: ['extensions', 'web', 'url'], message: 'Choose a direct web URL or a tunnel.' });
+  }
   if (config.extensions.tunnel?.mode === 'named' && !config.extensions.tunnel.url?.startsWith('https://')) {
     ctx.addIssue({ code: 'custom', path: ['extensions', 'tunnel', 'url'], message: 'A named tunnel requires its public HTTPS URL.' });
   }
