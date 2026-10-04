@@ -56,7 +56,7 @@
       <div class="conversation"><div class="chat-scroll" id="chat-scroll">
         <section id="welcome" class="welcome">
           <div class="mark large" aria-hidden="true"><img src="/bird.svg" alt=""></div>
-          <div id="key-banner" hidden><button id="connect-key">Connect OpenCode</button></div>
+          <div id="key-banner" hidden><button id="connect-key">Connect API key</button></div>
         </section>
         <section id="messages" class="messages" aria-label="Conversation" aria-live="polite"></section>
       </div>
@@ -85,7 +85,9 @@
     <form id="key-form">
       <button id="close-settings" class="dialog-close" type="button" aria-label="Close settings">×</button>
       <h2>Settings</h2>
-      <label for="api-key">OpenCode API key</label><input type="password" id="api-key" autocomplete="off" minlength="8" required>
+      <label for="provider">Provider</label><select id="provider"><option value="opencode-go">OpenCode Go / Zen</option><option value="openrouter">OpenRouter</option></select>
+      <label for="api-key">API key</label><input type="password" id="api-key" autocomplete="off" minlength="8" maxlength="4096" required>
+      <p id="provider-status" class="muted" role="status"></p>
       <p id="settings-model" class="muted"></p>
       <button type="submit" class="primary">Save key</button>
       <p id="key-error" class="error" role="alert"></p>

@@ -43,9 +43,9 @@ window.initNotifications = ({ selectChat }) => {
         const previous = seen.get(chat.id);
         const next = { notice: chat.notice?.id, approval: chat.approval };
         seen.set(chat.id, next);
-        if (!initialized || !previous) continue;
-        const approval = next.approval && next.approval !== previous.approval;
-        const reply = next.notice && next.notice !== previous.notice;
+        if (!initialized) continue;
+        const approval = next.approval && next.approval !== previous?.approval;
+        const reply = next.notice && next.notice !== previous?.notice;
         if (!(approval || reply) || chat.id === activeChat && !document.hidden && document.hasFocus()) continue;
         document.title = `(${++unread}) Phoenix`;
         if (enabled && Notification.permission === 'granted') worker().then(worker => worker.showNotification('Phoenix', {

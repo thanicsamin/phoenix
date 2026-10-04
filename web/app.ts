@@ -104,6 +104,7 @@ function showLogin() {
   authGeneration++; signedIn = false; latest = undefined; pendingUI = undefined;
   finances.reset(); cancelQueueEdit(); notifications.reset(); window.resetPreviews(true);
   drafts.clear(); draftMessages.clear(); $('#message').value = ''; $('#messages').replaceChildren();
+  $('#api-key').value = ''; $('#key-error').textContent = ''; $('#provider-status').textContent = '';
   try { sessionStorage.removeItem('phoenix-drafts'); } catch { /* Storage may be disabled. */ }
   window.stopVoice?.(); document.querySelectorAll<HTMLDialogElement>('dialog[open]').forEach(dialog => dialog.close());
   closeChats(); clearTimeout(reconnect); socket?.close(); $('#login').hidden = false; $('#app').hidden = true;
@@ -114,10 +115,19 @@ function showApp() {
   renderDrafts(); sizeComposer(); refresh().catch(error => { $('#agent-error').textContent = error.message; }); poll();
 }
 let promptBaseline = '';
+function providerName(id: string) {
+  return latest?.providers?.find(provider => provider.id === id)?.name || ({ 'opencode-go': 'OpenCode Go', opencode: 'OpenCode Zen', openrouter: 'OpenRouter' } as Record<string, string>)[id] || id;
+}
+function providerStatus() {
+  const provider = latest?.providers?.find(provider => provider.id === $('#provider').value);
+  $('#provider-status').textContent = provider ? provider.configured ? 'Key configured' : 'No key configured' : '';
+}
 async function openSettings() {
   const generation = authGeneration;
   closeChats();
-  $('#settings-model').textContent = latest ? `${latest.model.provider === 'opencode-go' ? 'OpenCode Go' : 'OpenCode Zen'} · ${latest.model.id}` : '';
+  $('#settings-model').textContent = latest ? `${providerName(latest.model.provider)} · ${latest.model.id}` : '';
+  $('#provider').value = latest?.model.provider === 'opencode' ? 'opencode-go' : latest?.model.provider || 'opencode-go';
+  $('#api-key').value = ''; $('#key-error').textContent = ''; providerStatus();
   $('#settings-dialog').showModal();
   await finances.refresh();
   if (generation !== authGeneration) return;
@@ -182,20 +192,30 @@ function render(state: ChatState) {
   $('#agent-name').textContent = state.name;
   $('#chat-title').textContent = state.title;
   const modelValue = `${state.model.provider}/${state.model.id}`;
-  if ($('#model').dataset.catalog !== JSON.stringify(state.models)) {
+  const catalog = JSON.stringify([state.models, state.providers]);
+  if ($('#model').dataset.catalog !== catalog) {
     $('#model').replaceChildren();
-    for (const provider of ['opencode-go', 'opencode']) {
-      const group = document.createElement('optgroup'); group.label = provider === 'opencode-go' ? 'Go' : 'Zen';
+    for (const provider of new Set(state.models.map(model => model.provider))) {
+      const group = document.createElement('optgroup'); group.label = providerName(provider);
       for (const model of state.models.filter(model => model.provider === provider)) {
-        const option = document.createElement('option'); option.value = `${provider}/${model.id}`; option.textContent = model.name; group.append(option);
+        const option = document.createElement('option'); option.value = `${provider}/${model.id}`; option.textContent = model.name;
+        option.disabled = state.providers?.find(item => item.id === provider)?.configured === false; group.append(option);
       }
       $('#model').append(group);
     }
-    $('#model').dataset.catalog = JSON.stringify(state.models);
+    $('#model').dataset.catalog = catalog;
   }
   $('#model').value = modelValue;
   $('#model').title = modelValue;
-  $('#model').disabled = state.busy || !state.configured;
+  $('#model').disabled = state.busy || !(state.providers ? state.providers.some(provider => provider.configured) : state.configured);
+  if (state.providers && $('#provider').dataset.catalog !== JSON.stringify(state.providers)) {
+    const selected = $('#provider').value;
+    $('#provider').replaceChildren(...state.providers.filter(provider => provider.id !== 'opencode').map(provider => {
+      const option = document.createElement('option'); option.value = provider.id; option.textContent = provider.id === 'opencode-go' ? 'OpenCode Go / Zen' : provider.name; return option;
+    }));
+    $('#provider').value = selected; $('#provider').dataset.catalog = JSON.stringify(state.providers);
+  }
+  providerStatus();
   if ($('#thinking').dataset.levels !== JSON.stringify(state.thinkingLevels)) {
     $('#thinking').replaceChildren(...state.thinkingLevels.map(level => {
       const option = document.createElement('option'); option.value = level; option.textContent = level === 'xhigh' ? 'Very high' : level === 'off' ? 'Off' : level[0].toUpperCase() + level.slice(1); return option;
@@ -351,11 +371,14 @@ $('#connect-key').addEventListener('click', openSettings);
 $('#close-settings').addEventListener('click', async () => { if (await discardChanges($('#system-prompt').value !== promptBaseline)) $('#settings-dialog').close(); });
 $('#settings-dialog').addEventListener('cancel', async event => { event.preventDefault(); if (await discardChanges($('#system-prompt').value !== promptBaseline)) $('#settings-dialog').close(); });
 $('#key-form').addEventListener('submit', async event => {
-  event.preventDefault(); (event.submitter as HTMLButtonElement).disabled = true;
-  try { await api('/api/provider', { apiKey: $('#api-key').value }); $('#api-key').value = ''; $('#key-error').textContent = ''; $('#settings-dialog').close(); revision = -1; await refresh(); }
-  catch (caught) { const error = caught instanceof Error ? caught : new Error(String(caught)); $('#key-error').textContent = error.message; }
-  finally { (event.submitter as HTMLButtonElement).disabled = false; }
+  event.preventDefault(); const generation = authGeneration;
+  const button = event.submitter as HTMLButtonElement;
+  button.disabled = true; $('#provider').disabled = true; $('#api-key').disabled = true;
+  try { await api('/api/provider', { provider: $('#provider').value, apiKey: $('#api-key').value }); $('#api-key').value = ''; $('#key-error').textContent = ''; $('#settings-dialog').close(); revision = -1; await refresh(); }
+  catch (caught) { if (generation === authGeneration) { const error = caught instanceof Error ? caught : new Error(String(caught)); $('#key-error').textContent = error.message; } }
+  finally { button.disabled = false; $('#provider').disabled = false; $('#api-key').disabled = false; }
 });
+$('#provider').addEventListener('change', () => { $('#api-key').value = ''; $('#key-error').textContent = ''; providerStatus(); });
 $('#logout').addEventListener('click', async () => { try { await api('/api/logout', {}); showLogin(); } catch (caught) { const error = caught instanceof Error ? caught : new Error(String(caught)); $('#agent-error').textContent = error.message; } });
 api('/api/session').then(result => { csrf = result.csrf; if (result.authenticated) showApp(); else showLogin(); }).catch(error => { showLogin(); $('#login-error').textContent = error.message; });
 $('#archived-chats').addEventListener('click', () => { showingArchived = !showingArchived; if (latest) render(latest); });

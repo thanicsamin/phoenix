@@ -1,14 +1,33 @@
 import type { ModelRuntime, ExtensionFactory } from '@earendil-works/pi-coding-agent';
+import { registerSecret } from './log.ts';
 export const openCodeProviders = ['opencode-go', 'opencode'];
+// Providers whose native Pi setup needs only an API key.
+export const apiKeyProviders = ['opencode-go', 'opencode', 'openrouter', 'openai', 'anthropic', 'google', 'xai', 'groq', 'mistral', 'deepseek', 'moonshotai', 'minimax', 'zai'] as const;
+
+export function providerChoices(runtime: ModelRuntime) {
+  return apiKeyProviders.map(id => ({ id, name: runtime.getProvider(id)?.name || id, configured: runtime.hasConfiguredAuth(id) }));
+}
+
+export async function saveProviderKey(runtime: ModelRuntime, provider: unknown, input: unknown) {
+  if (typeof provider !== 'string' || !(apiKeyProviders as readonly string[]).includes(provider)) throw Object.assign(Error('Choose a supported provider.'), { status: 400 });
+  if (typeof input !== 'string' || input.trim().length < 8 || input.trim().length > 4096) throw Object.assign(Error('Enter a valid API key.'), { status: 400 });
+  const key = input.trim(); registerSecret(key);
+  for (const id of openCodeProviders.includes(provider) ? openCodeProviders : [provider]) {
+    // Pi serializes and persists credentials in its private auth.json.
+    await runtime.login(id, 'api_key', { prompt: async () => key, notify() {} });
+    // Drop the legacy in-memory OpenCode override after saving a replacement.
+    await runtime.removeRuntimeApiKey(id);
+  }
+}
 
 // Pi's auxiliary requests can omit its session ID. Apply the conversation ID
 // at the HTTP boundary so retries, compaction and model changes share it too.
 export function openCodeSessionHeaders(sessionId: string): ExtensionFactory {
-  return pi => { pi.on('before_provider_headers', ({ headers }) => {
+  return pi => { pi.on('before_provider_headers', ({ headers }, context) => {
     for (const name of Object.keys(headers)) {
       if (['x-opencode-session', 'user-agent'].includes(name.toLowerCase())) delete headers[name];
     }
-    headers['x-opencode-session'] = sessionId;
+    if (openCodeProviders.includes(context.model?.provider || '')) headers['x-opencode-session'] = sessionId;
     headers['User-Agent'] = 'phoenix-agent/0.1.0';
   }); };
 }
@@ -27,6 +46,9 @@ export function configureOpenCode(runtime: ModelRuntime) {
   }
 }
 
-export function modelChoices(runtime: ModelRuntime) {
-  return openCodeProviders.flatMap(provider => runtime.getModels(provider).map(({ id, name }) => ({ provider, id, name })));
+export function modelChoices(runtime: ModelRuntime, current?: { provider: string; id: string }) {
+  return apiKeyProviders.flatMap(provider => {
+    const configured = runtime.hasConfiguredAuth(provider);
+    return runtime.getModels(provider).filter(model => configured || (current?.provider === provider && current.id === model.id)).map(({ id, name }) => ({ provider, id, name }));
+  });
 }

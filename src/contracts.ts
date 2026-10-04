@@ -29,6 +29,7 @@ export interface ChatState extends ChatSnapshot {
   chatId: string; title: string; archived: boolean; pinned: boolean; uiVersion?: string;
   browser?: BrowserState; internet?: { available: boolean; enabled: boolean; paired: boolean; connected: boolean };
   models: { provider: string; id: string; name: string }[]; chats: ChatSummary[]; jobs: Job[];
+  providers?: { id: string; name: string; configured: boolean }[];
   approvals: { id: string; tool: string; args: unknown }[];
 }
 

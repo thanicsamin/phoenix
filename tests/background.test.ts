@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Host } from '../src/host.ts';
-import { runJob, tick } from '../extensions/scheduler.ts';
+import { recoverJobs, runJob, tick } from '../extensions/scheduler.ts';
 import { deliverEmail } from '../extensions/email.ts';
 import permissions from '../extensions/permissions.ts';
 
@@ -47,6 +47,58 @@ test('due one-shot jobs execute with no browser client and do not repeat', async
   for (let index = 0; job.running && index < 100; index++) await new Promise(resolve => setTimeout(resolve, 5));
   tick(host);
   assert.equal(runs.length, 1); assert.equal(job.enabled, false); assert.equal(job.nextRunAt, null);
+});
+async function settleJobs(host) {
+  for (let attempt = 0; attempt < 200; attempt++) {
+    if (!host.records.some(chat => chat.jobs.some(job => job.running))) { await host.writeQueue; return; }
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+  assert.fail('Scheduled jobs did not finish');
+}
+test('restart catches up overdue jobs in archived side chats once and restores interrupted one-shot jobs', async t => {
+  const { host, config, directory, runs } = await fixture(t);
+  const side = await host.createChat('Archived tasks'); await host.archiveChat(side.id, true);
+  const repeating = await host.addJob(side.id, { name: 'Missed intervals', prompt: 'Catch up', everyMinutes: 5, nextRunAt: new Date(0).toISOString() });
+  const interrupted = await host.addJob('main', { name: 'Interrupted old one-shot', prompt: 'Resume', everyMinutes: 0 });
+  // Also recover metadata written by earlier versions, which consumed at start.
+  Object.assign(interrupted, { running: true, enabled: false, nextRunAt: null }); await host.save();
+  const restored = new Host(config, directory, directory); await restored.initialize(); restored.createSession = host.createSession;
+  t.after(() => restored.close());
+  await recoverJobs(restored); await settleJobs(restored); tick(restored); await settleJobs(restored);
+  assert.deepEqual(runs.map(run => run.id).sort(), ['main', side.id].sort());
+  assert.equal(restored.record('main').jobs[0].enabled, false);
+  assert.equal(restored.record(side.id).jobs[0].id, repeating.id);
+  assert.ok(Date.parse(restored.record(side.id).jobs[0].nextRunAt) > Date.now());
+  const again = new Host(config, directory, directory); await again.initialize(); again.createSession = host.createSession;
+  t.after(() => again.close()); await recoverJobs(again); await settleJobs(again);
+  assert.equal(runs.length, 2, 'Completed catch-up tasks repeated after restart');
+});
+test('failures retry after a delay; shutdown preserves unfinished manual jobs for restart', async t => {
+  const { host } = await fixture(t);
+  const job = await host.addJob('main', { name: 'Retry', prompt: 'Retry later', everyMinutes: 0 });
+  host.submit = async () => { throw Error('Provider unavailable'); };
+  const now = Date.now(); await runJob(host, 'main', job, now);
+  assert.equal(job.running, false); assert.equal(job.enabled, true); assert.ok(Date.parse(job.nextRunAt) >= now + 60000);
+  assert.equal(job.lastRunAt, undefined); assert.match(job.lastError, /Provider unavailable/);
+  const future = job.nextRunAt;
+  host.submit = async () => { host.closing = true; throw Error('Agent is shutting down.'); };
+  await runJob(host, 'main', job);
+  assert.equal(job.running, true); assert.equal(job.nextRunAt, future);
+  host.closing = false; let count = 0; host.submit = async () => { count++; return 'Done.'; };
+  await recoverJobs(host); await settleJobs(host);
+  assert.equal(count, 1); assert.equal(job.running, false); assert.equal(job.enabled, false);
+});
+test('catch-up keeps the two-job cap and leaves overflow due until a slot opens', async t => {
+  const { host } = await fixture(t);
+  let started = 0; const release = [];
+  host.submit = async () => { started++; await new Promise(resolve => release.push(resolve)); return 'Done.'; };
+  for (let index = 0; index < 4; index++) await host.addJob('main', { name: `Task ${index}`, prompt: 'Work', everyMinutes: 0, nextRunAt: new Date(0).toISOString() });
+  await recoverJobs(host); tick(host); await host.writeQueue; await new Promise(resolve => setImmediate(resolve));
+  assert.equal(started, 2); assert.equal(host.record('main').jobs.filter(job => job.running).length, 2);
+  release.splice(0).forEach(resolve => resolve()); await settleJobs(host);
+  tick(host); await host.writeQueue; await new Promise(resolve => setImmediate(resolve)); assert.equal(started, 4);
+  release.splice(0).forEach(resolve => resolve()); await settleJobs(host); tick(host);
+  assert.equal(started, 4); assert.ok(host.record('main').jobs.every(job => !job.enabled));
 });
 test('incoming email wakes the Inbox chat and is framed as untrusted data', async t => {
   const { host, runs } = await fixture(t);

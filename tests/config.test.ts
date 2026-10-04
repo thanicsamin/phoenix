@@ -2,14 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { configSchema, loadConfig } from '../src/config.ts';
 
-test('default setup enables protected web and browser without a third-party tunnel; only OpenCode providers', async () => {
+test('default setup enables protected web and browser; native API-key providers are accepted', async () => {
   const config = await loadConfig('agent.json');
   assert.equal(config.model.provider, 'opencode-go');
   assert.ok(config.extensions.auth);
   assert.ok(config.extensions.browser);
   assert.equal(config.extensions.tunnel, undefined);
   assert.equal(config.extensions.web.port, 8080);
-  assert.throws(() => configSchema.parse({ ...config, model: { provider: 'openai', id: 'gpt-5' } }));
+  assert.equal(configSchema.parse({ ...config, model: { provider: 'openrouter', id: 'google/gemini-2.5-flash' } }).model.provider, 'openrouter');
+  assert.equal(configSchema.parse({ ...config, model: { provider: 'openai', id: 'gpt-5' } }).model.provider, 'openai');
+  assert.throws(() => configSchema.parse({ ...config, model: { provider: 'unknown-provider', id: 'model' } }));
 });
 test('channel extensions fail closed without allowlists and secrets cannot be embedded', async () => {
   const config = await loadConfig('agent.json');

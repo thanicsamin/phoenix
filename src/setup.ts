@@ -10,7 +10,7 @@ export async function saveSetup(host: Host, input: unknown) {
   const config = parsed.data;
   if (config.extensions.web.port !== host.config.extensions.web.port) throw Object.assign(new Error(`Keep browser port ${host.config.extensions.web.port} in this setup.`), { status: 400 });
   for (const selection of [config.model, ...config.chats.map(chat => chat.model).filter(selection => selection !== undefined)]) {
-    if (!host.modelRuntime.getModel(selection.provider, selection.id)) throw Object.assign(new Error('Setup contains an unknown OpenCode model.'), { status: 400 });
+    if (!host.modelRuntime.getModel(selection.provider, selection.id)) throw Object.assign(new Error('Setup contains an unknown model.'), { status: 400 });
   }
   if (host.restarting || [...host.loaded.values()].some(chat => chat.pending)) throw Object.assign(new Error('Wait for active chats to finish before importing.'), { status: 409 });
   const newNames = config.chats.filter(template => !host.records.some(chat => !chat.route && chat.title === template.name));

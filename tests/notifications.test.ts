@@ -22,9 +22,14 @@ test('opt-in notifications deduplicate replies and approvals, use private bodies
   notifications.update([{ ...chat, approval: 'approval-one', notice: { id: 'one' } }], 'main');
   notifications.update([{ ...chat, approval: 'approval-one', notice: { id: 'one' } }], 'main');
   await new Promise(resolve => setImmediate(resolve)); assert.equal(sent.length, 2); assert.match(sent[1][1].body, /approval/);
+  // A fast background reply can arrive in the first snapshot of a new chat.
+  const chats = [{ ...chat, approval: 'approval-one', notice: { id: 'one' } }, { id: 'new-chat', title: 'Private new title', notice: { id: 'fast', type: 'reply' } }];
+  notifications.update(chats, 'main'); notifications.update(chats, 'main');
+  await new Promise(resolve => setImmediate(resolve)); assert.equal(sent.length, 3); assert.equal(sent[2][1].data.chatId, 'new-chat');
+  assert.ok(!JSON.stringify(sent).includes('Private new title'));
   document.hidden = false;
   notifications.update([{ ...chat, notice: { id: 'two' } }], 'main');
-  await new Promise(resolve => setImmediate(resolve)); assert.equal(sent.length, 2);
+  await new Promise(resolve => setImmediate(resolve)); assert.equal(sent.length, 3);
   notifications.reset(); await new Promise(resolve => setImmediate(resolve)); assert.equal(document.title, 'Phoenix'); assert.equal(dismissed, 1);
-  notifications.update([{ ...chat, notice: { id: 'three' } }], 'main'); await new Promise(resolve => setImmediate(resolve)); assert.equal(sent.length, 2);
+  notifications.update([{ ...chat, notice: { id: 'three' } }], 'main'); await new Promise(resolve => setImmediate(resolve)); assert.equal(sent.length, 3);
 });

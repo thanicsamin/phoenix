@@ -81,6 +81,8 @@ interface Elements {
   '#key-form': HTMLFormElement;
   '#close-settings': HTMLButtonElement;
   '#api-key': HTMLInputElement;
+  '#provider': HTMLSelectElement;
+  '#provider-status': HTMLElement;
   '#settings-model': HTMLElement;
   '#key-error': HTMLElement;
   '#theme': HTMLSelectElement;

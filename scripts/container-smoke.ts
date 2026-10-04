@@ -16,3 +16,4 @@ await import('./ui-generations-smoke.ts');
 await import('./ergonomics-ui-smoke.ts');
 
 await import('./plaid-ui-smoke.ts');
+await import('./providers-ui-smoke.ts');

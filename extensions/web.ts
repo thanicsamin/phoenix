@@ -8,7 +8,7 @@ import type { ExtensionOptions } from '../src/types.ts';
 import { errorOf } from '../src/errors.ts';
 import { createServer } from 'node:http';
 import { readdirSync } from 'node:fs';
-import { readFile, writeFile, rename, stat, realpath } from 'node:fs/promises';
+import { readFile, stat, realpath } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import { join } from 'node:path';
@@ -16,8 +16,9 @@ import { attachWebSocket } from './websocket.ts';
 import { lifecycle } from '../src/host.ts';
 import { randomUUID } from 'node:crypto';
 import { isIPv4 } from 'node:net';
-import { log, registerSecret } from '../src/log.ts';
+import { log } from '../src/log.ts';
 import { attachBrowserSocket } from './browser-socket.ts';
+import { saveProviderKey } from '../src/models.ts';
 
 const files: Record<string, [URL, string]> = {
   '/': [new URL('../web/index.html', import.meta.url), 'text/html; charset=utf-8'],
@@ -308,13 +309,9 @@ export function createWebServer(host: Host, logger = log) {
         await host.setModel(chatId, selection); return send(200, {});
       }
       if (request.method === 'POST' && path === '/api/provider') {
-        const { apiKey } = await readBody(request);
-        if (typeof apiKey !== 'string' || apiKey.length < 8 || apiKey.length > 4096) return send(400, { error: 'Enter a valid OpenCode API key.' });
-        registerSecret(apiKey.trim());
-        const path = join(host.dataDir, 'opencode-key');
-        await writeFile(`${path}.tmp`, apiKey.trim(), { mode: 0o600 });
-        await rename(`${path}.tmp`, path);
-        for (const provider of ['opencode', 'opencode-go']) await host.modelRuntime.setRuntimeApiKey(provider, apiKey.trim());
+        if (auth.preview) return send(403, { error: 'Sign in as the owner to manage API keys.' });
+        const { provider = 'opencode-go', apiKey } = await readBody(request);
+        await saveProviderKey(host.modelRuntime, provider, apiKey);
         host.changed(); return send(200, {});
       }
       return send(404, { error: 'Not found.' });

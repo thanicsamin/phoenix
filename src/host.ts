@@ -14,7 +14,7 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { readFile, writeFile, rename } from 'node:fs/promises';
 import { join } from 'node:path';
-import { modelChoices } from './models.ts';
+import { modelChoices, providerChoices } from './models.ts';
 import { jobSchema, modelSchema, thinkingSchema } from './config.ts';
 import { Files } from './files.ts';
 import { Workspace } from './workspace.ts';
@@ -306,7 +306,8 @@ export class Host extends EventEmitter {
   async state(id = 'main'): Promise<ChatState> {
     const chat = await this.getChat(id);
     const record = this.record(id);
-    return { ...chat.state(), browser: this.browserControls?.get(id)?.state(), models: this.modelRuntime ? modelChoices(this.modelRuntime) : [], revision: this.revision, uiVersion: this.ui?.version, internet: this.internet?.status(), chatId: id, title: record.title, archived: !!record.archived, pinned: !!record.pinned, extensions: this.extensions,
+    const snapshot = chat.state();
+    return { ...snapshot, browser: this.browserControls?.get(id)?.state(), models: this.modelRuntime ? modelChoices(this.modelRuntime, snapshot.model) : [], providers: this.modelRuntime ? providerChoices(this.modelRuntime) : [], revision: this.revision, uiVersion: this.ui?.version, internet: this.internet?.status(), chatId: id, title: record.title, archived: !!record.archived, pinned: !!record.pinned, extensions: this.extensions,
       chats: [...this.records].sort((a, b) => Number(b.id === 'main') - Number(a.id === 'main') || Number(!!b.pinned) - Number(!!a.pinned) || (b.lastSentAt || 0) - (a.lastSentAt || 0)).map(({ id, title, jobs, archived, pinned }) => ({ id, title, archived: !!archived, pinned: !!pinned, jobs: jobs.filter(job => job.enabled).length,
         busy: (this.loaded.get(id)?.pending || 0) > 0, notice: this.loaded.get(id)?.notice, approval: [...this.approvals.values()].find(item => item.chatId === id)?.id || false as const })), jobs: record.jobs,
       approvals: [...this.approvals.values()].filter(approval => approval.chatId === id).map(({ id, tool, args }) => ({ id, tool, args })),
@@ -323,8 +324,8 @@ export class Host extends EventEmitter {
     const thinking = thinkingSchema.safeParse(input.thinking);
     if (!selection.success || !thinking.success) throw Object.assign(new Error('Choose a valid model and thinking level.'), { status: 400 });
     const model = this.modelRuntime.getModel(selection.data.provider, selection.data.id);
-    if (!model) throw Object.assign(new Error('Unknown OpenCode model.'), { status: 400 });
-    if (!this.modelRuntime.hasConfiguredAuth(model.provider)) throw Object.assign(new Error('Connect your OpenCode key first.'), { status: 400 });
+    if (!model) throw Object.assign(new Error('Unknown model.'), { status: 400 });
+    if (!this.modelRuntime.hasConfiguredAuth(model.provider)) throw Object.assign(new Error('Connect a key for this provider in Settings first.'), { status: 400 });
     const chat = await this.getChat(chatId);
     if (chat.pending) throw Object.assign(new Error('Wait for this chat to finish.'), { status: 409 });
     await chat.session.setModel(model);

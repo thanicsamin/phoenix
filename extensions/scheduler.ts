@@ -13,16 +13,28 @@ export async function runJob(host: Host, chatId: string, job: Job, now = Date.no
   if (host.records.flatMap(chat => chat.jobs).filter(item => item.running).length >= 2) return;
   job.running = true;
   log.info('job.started', { chatId, jobId: job.id });
-  job.lastRunAt = new Date(now).toISOString();
-  job.nextRunAt = job.everyMinutes ? new Date(now + job.everyMinutes * 60000).toISOString() : null;
-  job.enabled = job.everyMinutes > 0;
   try {
     await host.save();
     await host.submit(job.prompt, `Scheduled task: ${job.name}`, chatId);
+    job.lastRunAt = new Date(now).toISOString();
+    job.nextRunAt = job.everyMinutes ? new Date(Math.max(now, Date.now()) + job.everyMinutes * 60000).toISOString() : null;
+    job.enabled = job.everyMinutes > 0;
     job.lastError = '';
     log.info('job.finished', { chatId, jobId: job.id });
-  } catch (caught) { const error = errorOf(caught); job.lastError = error.message; log.error('job.failed', { chatId, jobId: job.id, error }); }
-  finally { job.running = false; await host.save(); }
+  } catch (caught) {
+    const error = errorOf(caught); job.lastError = error.message;
+    // Keep shutdown interruptions marked for recovery, including manual runs.
+    if (!host.closing && !host.restarting) {
+      job.enabled = true;
+      job.nextRunAt = new Date(Math.max(now, Date.now()) + 60000).toISOString();
+      job.running = false;
+    }
+    log.error('job.failed', { chatId, jobId: job.id, error });
+    await host.save();
+    return;
+  }
+  job.running = false;
+  await host.save();
 }
 export function tick(host: Host, now = Date.now()) {
   for (const chat of host.records) for (const job of chat.jobs) {
@@ -32,20 +44,31 @@ export function tick(host: Host, now = Date.now()) {
   }
 }
 
+export async function recoverJobs(host: Host, now = Date.now()) {
+  for (const chat of host.records) for (const job of chat.jobs) if (job.running) {
+    job.running = false;
+    job.enabled = true;
+    job.nextRunAt = new Date(now).toISOString();
+    job.lastError = 'Interrupted by restart. Retrying.';
+  }
+  await host.save();
+  tick(host, now);
+}
+
 export default function scheduler(pi: ExtensionAPI, host: Host, _options: ExtensionOptions<'scheduler'>, chatId = 'main') {
   let timer: NodeJS.Timeout | undefined;
-  lifecycle(pi, host, 'scheduler', () => {
-    // A run interrupted by a restart is reported, never silently replayed.
-    for (const chat of host.records) for (const job of chat.jobs) if (job.running) {
-      job.running = false; job.lastError = 'Interrupted by restart. Run again when ready.';
-    }
-    timer = setInterval(() => tick(host), 1000);
+  lifecycle(pi, host, 'scheduler', async () => {
     host.runJob = async (id, jobId) => {
       const job = host.record(id).jobs.find(job => job.id === jobId);
       if (!job) throw Object.assign(new Error('Job not found.'), { status: 404 });
       if (job.running) throw Object.assign(new Error('Job is already running.'), { status: 409 });
+      job.enabled = true;
+      job.nextRunAt = new Date().toISOString();
+      await host.save();
       runJob(host, id, job).catch(error => log.error('job.persist_failed', { chatId: id, jobId, error }));
     };
+    await recoverJobs(host);
+    timer = setInterval(() => tick(host), 1000);
   }, () => { clearInterval(timer); });
   pi.registerTool({
     name: 'schedule', label: 'Schedule a task',

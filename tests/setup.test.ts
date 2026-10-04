@@ -15,7 +15,7 @@ test('setup import validates before writing and restores exported chat models/jo
   host.modelRuntime={getModel:(provider,id)=>provider==='opencode-go' && id==='space-bunny-free' ? {provider,id}:undefined};
   await assert.rejects(saveSetup(host,{...config,apiKey:'secret'}),/Invalid setup/);
   await assert.rejects(readFile(join(directory,'setup.json')),/ENOENT/);
-  await assert.rejects(saveSetup(host,{...config,model:{provider:'opencode',id:'missing'}}),/unknown OpenCode/);
+  await assert.rejects(saveSetup(host,{...config,model:{provider:'opencode',id:'missing'}}),/unknown model/);
   host.loaded.set('main',{pending:1});
   await assert.rejects(saveSetup(host,config),/active chats/); host.loaded.clear();
   const side=await host.createChat('Research');
@@ -42,8 +42,8 @@ test('model and thinking selections stay in their chat, reject active changes, a
   await host.setModel(side.id,{model:config.model,thinking:'high'});
   assert.equal((await host.getChat(side.id)).session.thinkingLevel,'high');
   assert.equal((await host.getChat('main')).session.thinkingLevel,'low');
-  await assert.rejects(host.setModel(side.id,{model:{provider:'openai',id:'gpt-5'},thinking:'high'}),/valid model/);
-  await assert.rejects(host.setModel(side.id,{model:{provider:'opencode-go',id:'missing'},thinking:'high'}),/Unknown OpenCode/);
+  await assert.rejects(host.setModel(side.id,{model:{provider:'unknown-provider',id:'gpt-5'},thinking:'high'}),/valid model/);
+  await assert.rejects(host.setModel(side.id,{model:{provider:'opencode-go',id:'missing'},thinking:'high'}),/Unknown model/);
   (await host.getChat(side.id)).pending=1;
   await assert.rejects(host.setModel(side.id,{model:config.model,thinking:'low'}),/finish/);
   const restored=new Host(config,directory,directory); await restored.initialize();
