@@ -59,6 +59,20 @@ test('VPS environment selects the default public port, honors an override, and r
   web({ on(event, callback) { if (event === 'session_start') start = callback; } }, host, { port: 0 });
   await start(); assert.equal(host.extensions.web, 'failed');
   for (const cleanup of host.cleanups) await cleanup();
+  process.env.PHOENIX_PUBLIC_IP = 'auto'; delete process.env.PHOENIX_HTTPS_PORT;
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+  for (const [status, ip, expected] of [[200, '203.0.113.10\n', 'https://203.0.113.10:24843'], [503, '', undefined], [200, 'bad-address', undefined]]) {
+    globalThis.fetch = async (url, options) => {
+      assert.equal(url, 'https://api.ipify.org'); assert.ok(options.signal instanceof AbortSignal);
+      return new Response(ip, { status });
+    };
+    const host = { auth, config: { extensions: {} }, cleanups: [], extensions: {}, changed() {} };
+    let start;
+    web({ on(event, callback) { if (event === 'session_start') start = callback; } }, host, { port: 0 });
+    await start(); assert.equal(host.publicUrl, expected); assert.equal(host.extensions.web, expected ? 'ready' : 'failed');
+    for (const cleanup of host.cleanups) await cleanup();
+  }
 });
 
 test('web gates agent/config access, checks origin and CSRF, accepts only valid prompts', async t => {

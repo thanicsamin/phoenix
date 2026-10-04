@@ -3,5 +3,9 @@ services:
   phoenix:
     platform: linux/arm64
     ports: !reset []
+    environment:
+      PHOENIX_PUBLIC_IP: ${PHOENIX_PUBLIC_IP:-auto}
   https:
     profiles: !reset []
+    environment:
+      PHOENIX_PUBLIC_IP: ${PHOENIX_PUBLIC_IP:-auto}

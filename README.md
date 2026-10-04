@@ -154,9 +154,10 @@ in the runtime or added to its Nix package list.
 ## Browser links
 
 Local Docker use opens `http://localhost:8080`. VPS use defaults to direct HTTPS
-on **24843**, without a Cloudflare account or a domain. Set
-`PHOENIX_PUBLIC_IP=YOUR_PUBLIC_IPV4` in `.env`. Oracle's Compose override enables
-the HTTPS proxy automatically; on other VPS hosts also set `COMPOSE_PROFILES=public`.
+on **24843**, without a Cloudflare account or a domain. Oracle's Compose override
+enables HTTPS and discovers the public IPv4 automatically using ipify.
+On other VPS hosts, set `PHOENIX_PUBLIC_IP=YOUR_PUBLIC_IPV4` and `COMPOSE_PROFILES=public` in `.env`.
+You can override Oracle's detection with `PHOENIX_PUBLIC_IP` too.
 Change `PHOENIX_HTTPS_PORT` in `.env` if that port is already in use.
 
 Open TCP port **24843** in the VPS firewall and cloud network rules, plus **80**
@@ -378,8 +379,8 @@ Check the Always Free allocation shown in your console before provisioning.
 Availability is region-dependent; Oracle may reclaim idle free instances.
 Keep backups of the persistent data and Nix store/state volumes for recovery.
 
-With Docker Compose installed and this checkout on the instance, set
-`PHOENIX_PUBLIC_IP` in `.env` and allow TCP ports 24843 and 80:
+With Docker Compose installed and this checkout on the instance, allow TCP ports
+24843 and 80 in Oracle's network rules, then run one command:
 
 ```sh
 docker compose -f compose.yaml -f compose.oracle.yaml up --build -d
@@ -390,6 +391,8 @@ same Nix runtime runs inside the container; you do not need to replace the VPS
 host OS. Retrieve the browser link and initial password with
 `docker compose logs phoenix`. The private application port is unpublished;
 the HTTPS proxy forwards browser traffic and WebSockets internally.
+No environment file, Cloudflare account or domain is needed. The public IP is
+detected at startup; override it only if your server uses a separate outbound IP.
 
 The pinned base image and Nix flake support both AMD64 and ARM64. CI builds and
 smoke-tests the container on native Linux runners for both architectures, with

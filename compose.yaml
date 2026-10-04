@@ -38,6 +38,7 @@ services:
     profiles: [public]
     image: caddy:2.11.6-alpine@sha256:c776e0c6413b544d0459665e54ec7b8b2a15000c0cbee8b254da0067b1d184ff
     restart: unless-stopped
+    entrypoint: [/bin/sh, /etc/caddy/start.sh]
     ports:
       - "${PHOENIX_HTTPS_PORT:-24843}:443"
       - "80:80"
@@ -46,6 +47,7 @@ services:
       GOMEMLIMIT: 80MiB
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./deploy/start-https.sh:/etc/caddy/start.sh:ro
       - https-data:/data
       - https-config:/config
     mem_limit: 128m

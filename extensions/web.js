@@ -267,9 +267,15 @@ export default function web(pi, host, options) {
     if (!host.auth) throw new Error('Authentication extension is required.');
     if (process.env.PHOENIX_PUBLIC_IP) {
       const port = Number(process.env.PHOENIX_HTTPS_PORT || 24843);
-      if (!isIPv4(process.env.PHOENIX_PUBLIC_IP) || !Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Set a valid PHOENIX_PUBLIC_IP and PHOENIX_HTTPS_PORT.');
       if (host.config?.extensions.tunnel) throw new Error('Choose direct HTTPS or a tunnel.');
-      host.publicUrl = `https://${process.env.PHOENIX_PUBLIC_IP}:${port}`;
+      let ip = process.env.PHOENIX_PUBLIC_IP;
+      if (ip === 'auto') {
+        const response = await fetch('https://api.ipify.org', { signal: AbortSignal.timeout(10000) });
+        if (!response.ok) throw new Error('Public IP discovery failed. Set PHOENIX_PUBLIC_IP explicitly.');
+        ip = (await response.text()).trim();
+      }
+      if (!isIPv4(ip) || !Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Set a valid PHOENIX_PUBLIC_IP and PHOENIX_HTTPS_PORT.');
+      host.publicUrl = `https://${ip}:${port}`;
     }
     if (options.url) host.publicUrl = options.url;
     server = createWebServer(host);
