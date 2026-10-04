@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "types": ["dom-speech-recognition"] },
+  "include": ["web/**/*.ts", "src/contracts.ts"]
+}

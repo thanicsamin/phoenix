@@ -1,0 +1,30 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { once } from 'node:events';
+import { mkdtemp, rm, mkdir, writeFile, symlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createAuth } from '../extensions/auth.ts';
+import { createWebServer } from '../extensions/web.ts';
+import { Interface } from '../src/interface.ts';
+
+test('UI publication preserves authentication, requires CSRF and serves only snapshot assets', async t => {
+  const data = await mkdtemp(join(tmpdir(), 'phoenix-interface-')); t.after(() => rm(data, { recursive: true, force: true }));
+  const root = join(data, 'web'); await mkdir(root); await writeFile(join(root, 'index.html'), '<html><head></head><body>First</body></html>');
+  await writeFile(join(data, 'private.txt'), 'PRIVATE'); await symlink(join(data, 'private.txt'), join(root, 'app.js'));
+  const ui = { root, version: 'first', history: async () => ({ available: true, generations: [] }), apply: async () => { ui.version = 'second'; await writeFile(join(root, 'index.html'), '<html><head></head><body>Second</body></html>'); return ui.history(); }, switch: async () => { ui.version = 'first'; return ui.history(); } };
+  let changes = 0; const host = { ui, auth: await createAuth(data, { password: 'interface-test-password' }), changed: () => changes++ };
+  const server = createWebServer(host); server.listen(0, '127.0.0.1'); await once(server, 'listening'); host.port = server.address().port;
+  t.after(() => { server.closeAllConnections(); server.close(); }); const base = `http://127.0.0.1:${host.port}`;
+  const post = (path, body = {}, extra = {}) => fetch(base + path, { method: 'POST', headers: { Origin: base, 'Content-Type': 'application/json', ...extra }, body: JSON.stringify(body) });
+  assert.equal((await post('/api/ui/apply')).status, 401); assert.equal((await fetch(base + '/api/ui/generations')).status, 401);
+  assert.equal((await fetch(base + '/app.js')).status, 404);
+  const first = await fetch(base); assert.equal(first.headers.get('cache-control'), 'no-store'); assert.match(await first.text(), /ui-version" content="first"/);
+  const login = await post('/api/login', { password: 'interface-test-password' }); const cookie = login.headers.get('set-cookie').split(';')[0]; const { csrf } = await login.json();
+  assert.equal((await post('/api/ui/apply', {}, { Cookie: cookie })).status, 403);
+  const headers = { Cookie: cookie, 'X-CSRF-Token': csrf }; assert.equal((await post('/api/ui/apply', {}, headers)).status, 200);
+  assert.match(await (await fetch(base)).text(), /Second/); assert.match(await (await fetch(base)).text(), /content="second"/);
+  assert.equal((await post('/api/ui/switch', { generation: 1 }, headers)).status, 200);
+  assert.equal(changes, 2); assert.equal((await (await fetch(base + '/api/session', { headers: { Cookie: cookie } })).json()).authenticated, true);
+  const snapshot = new Interface(data, data); await assert.rejects(snapshot.validate(root), /symlinks/);
+});

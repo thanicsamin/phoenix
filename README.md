@@ -71,11 +71,11 @@ when two scheduled jobs are already running. `/data`, `/nix/store` and
 `/nix/var/nix` are disk-backed volumes. Only disposable `/tmp` uses tmpfs.
 
 Live updates use an authenticated WebSocket with polling as a reconnect
-fallback. No frontend framework or build step is required.
+fallback. The UI has no framework; its TypeScript compiles to browser JavaScript during the image build or UI publication.
 
 Chat messages render Markdown, including tables and code blocks, and LaTeX math
 with `$…$`, `$$…$$`, `\(…\)` and `\[…\]`. Rendering and fonts are served locally.
-Raw HTML is escaped; remote images are shown as links. This renders equations,
+Raw HTML is escaped; HTTPS and protected attachment images can render inline. This renders equations,
 rather than compiling full `.tex` documents. PDF command-line tools are included.
 
 Use **＋** to attach up to eight files, 20 MB each. Images go directly to models
@@ -137,7 +137,7 @@ Add your own native Pi extensions and skills declaratively:
 
 ```json
 "pi": {
-  "extensions": ["/data/extensions/my-extension.js"],
+  "extensions": ["/data/extensions/my-extension.ts"],
   "skills": ["/data/skills"]
 }
 ```
@@ -275,7 +275,7 @@ npm test
 npm run check
 ```
 
-Node 24 is pinned in the Nix runtime; local development requires Node 22.19+.
+Node 24 is pinned in the Nix runtime; local development requires Node 24+.
 Use `nix run .#default` for the packaged service. `nix/runtime.nix` defines its
 system tools, browser and fonts. The Docker image contains the Nix closure and
 runs as root **inside the container**, with a read-only base filesystem and
@@ -283,7 +283,7 @@ writable persistent data, Nix store and Nix state volumes. Compose caps the whol
 container at 2 GiB with no extra swap; set `PHOENIX_MEMORY_LIMIT` to change it.
 Chromium uses a 128 MiB JavaScript heap budget and a two-renderer process target;
 the container limit is the hard boundary for all Chromium processes combined.
-Node has a 256 MiB old-space limit. Large source builds may need a higher container
+The running agent has a 256 MiB old-space limit. Type checking uses a temporary, bounded 1 GiB compiler process; it exits after publication. Large source builds may need a higher container
 limit; cached Nix packages avoid most compilation. `/usr/bin/env` is supplied for
 npm CLI shebangs. It does not receive
 the host Docker socket or privileged mode.
@@ -291,7 +291,7 @@ the host Docker socket or privileged mode.
 The editable source is copied once into `/data/workspace/phoenix`; edits survive
 reloads and container replacement. **Files** exposes this source. Ask the agent
 to modify itself, check the result, and use `reload_agent` (or **Reload agent** in
-Files). It checks JavaScript syntax, snapshots code and dependencies in the Nix
+Files). It checks the TypeScript project, compiles browser assets, snapshots code and dependencies in the Nix
 store, and atomically switches a dedicated agent profile to the new generation.
 **Files → History → Agent** lists prior versions and can restore them; the agent has
 `rollback_agent` too. A failed startup automatically returns to the last working

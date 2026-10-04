@@ -6,3 +6,6 @@ result
 result-*
 coverage/
 *.log
+
+# Browser bundles are generated from the checked TypeScript sources.
+web/*.js

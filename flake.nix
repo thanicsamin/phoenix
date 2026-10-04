@@ -14,15 +14,19 @@
             version = "0.1.0";
             src = pkgs.lib.fileset.toSource {
               root = ./.;
-              fileset = pkgs.lib.fileset.unions [ ./package.json ./package-lock.json ./PHOENIX.md ./src ./extensions ./web ./agent.json ./flake.lock ./nix/agent-flake.nix ];
+              fileset = pkgs.lib.fileset.unions [ ./package.json ./package-lock.json ./tsconfig.json ./tsconfig.web.json ./PHOENIX.md ./src ./extensions ./web ./agent.json ./flake.lock ./nix/agent-flake.nix ];
             };
             nodejs = pkgs.nodejs_24;
-            npmDepsHash = "sha256-Mc+VIVwV2URQ8j9f2V7LbednSm07jRdf65nKvJg1tIQ=";
+            npmDepsHash = "sha256-2whyy8zEcd7WvWOBoqNHmeL9AeneTmsK/gItX2nrmF0=";
             npmFlags = [ "--ignore-scripts" "--omit=dev" ];
-            dontNpmBuild = true;
+            buildPhase = ''
+              runHook preBuild
+              node src/build.ts
+              runHook postBuild
+            '';
             installPhase = ''
               mkdir -p $out/share/phoenix $out/bin
-              cp -r src extensions web agent.json PHOENIX.md package.json package-lock.json flake.lock node_modules $out/share/phoenix/
+              cp -r src extensions web agent.json PHOENIX.md package.json package-lock.json tsconfig.json tsconfig.web.json flake.lock node_modules $out/share/phoenix/
               mkdir -p $out/share/phoenix/nix
               cp nix/agent-flake.nix $out/share/phoenix/nix/
               cat > $out/bin/phoenix <<EOF
@@ -32,7 +36,7 @@
               export CHROMIUM_PATH="${pkgs.chromium}/bin/chromium"
               export SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
               export PHOENIX_CONFIG="\''${PHOENIX_CONFIG:-$out/share/phoenix/agent.json}"
-              exec ${pkgs.nodejs_24}/bin/node $out/share/phoenix/src/bootstrap.js
+              exec ${pkgs.nodejs_24}/bin/node $out/share/phoenix/src/bootstrap.ts
               EOF
               chmod +x $out/bin/phoenix
             '';

@@ -29,7 +29,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci --ignore-scripts
-      - run: node --test tests/internet.test.js
+      - run: node --test tests/internet.test.ts
   container:
     strategy:
       matrix:
@@ -52,4 +52,4 @@ jobs:
           --memory 2g --memory-swap 2g --cpus 1
           --tmpfs /tmp:rw,nosuid,nodev,size=64m
           --mount type=bind,src=${{ github.workspace }}/scripts,target=/app/scripts,readonly
-          phoenix-agent:test /bin/node scripts/container-smoke.mjs
+          phoenix-agent:test /bin/node scripts/container-smoke.ts

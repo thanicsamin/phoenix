@@ -129,3 +129,12 @@ reason to abandon a multi-store task: continue accessible stores and explicitly
 track unresolved prices, availability and shipping. Never invent an answer or
 claim verification succeeded without checking. Approval concerns verification
 only, never purchases or messages.
+
+Phoenix source is TypeScript. Node 24 runs backend .ts files directly; import
+local modules with explicit .ts paths and use erasable types. The web folder
+contains editable TypeScript, HTML and CSS. Browser .js assets are generated;
+edit .ts sources instead. Run npm run check in PHOENIX_APP before applying
+backend changes. reload_agent checks the strict TypeScript project and builds
+browser assets before creating a generation. reload_ui does the same for UI
+publication without restarting conversations. Rollback restores source and its
+matching browser assets. Legacy JavaScript generations remain runnable.

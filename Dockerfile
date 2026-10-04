@@ -3,7 +3,7 @@ WORKDIR /build
 COPY flake.lock ./
 COPY nix/runtime.nix ./nix/runtime.nix
 RUN nix --extra-experimental-features 'nix-command flakes' build --impure --expr 'let lock = builtins.fromJSON (builtins.readFile ./flake.lock); pkgs = import (builtins.getFlake ("github:NixOS/nixpkgs/" + lock.nodes.nixpkgs.locked.rev)).outPath {}; in import ./nix/runtime.nix { inherit pkgs; }' --out-link /build/runtime
-COPY flake.nix package.json package-lock.json ./
+COPY flake.nix package.json package-lock.json tsconfig.json tsconfig.web.json ./
 COPY nix/module.nix ./nix/module.nix
 COPY nix/agent-flake.nix ./nix/agent-flake.nix
 COPY nix/container-init.sh ./nix/container-init.sh
@@ -49,4 +49,4 @@ EXPOSE 8080
 VOLUME ["/data", "/nix/store", "/nix/var/nix"]
 HEALTHCHECK --interval=30s --timeout=3s CMD ["/bin/node", "-e", "fetch('http://localhost:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
 ENTRYPOINT ["/sbin/busybox", "sh", "/sbin/phoenix-init"]
-CMD ["/bin/node", "src/bootstrap.js"]
+CMD ["/bin/node", "src/bootstrap.ts"]
