@@ -20,3 +20,22 @@ const updatedBase = join(data, 'new-base'); await mkdir(updatedBase); await writ
 const updated = new Interface(data, app); await updated.initialize(updatedBase); assert.match(await readFile(join(updated.root, 'index.html'), 'utf8'), /New contract/);
 assert.equal((await updated.history()).generations.length, 3); assert.equal(updated.root, await realpath(updated.profile));
 console.log('UI generations passed: small immutable snapshots, syntax/symlink rejection, restart persistence, source rollback and full agent UI contract.');
+
+const typedData = '/data/typed-ui-generation-check'; const typedApp = join(typedData, 'workspace/phoenix'); const typedWeb = join(typedApp, 'web');
+await rm(typedData, { recursive: true, force: true }); await mkdir(typedWeb, { recursive: true }); await mkdir(join(typedApp, 'src'));
+await symlink('/app/node_modules', join(typedApp, 'node_modules'));
+await writeFile(join(typedApp, 'package.json'), '{"type":"module"}');
+await writeFile(join(typedApp, 'tsconfig.json'), JSON.stringify({ compilerOptions: { strict: true, noEmit: true, target: 'ES2024', module: 'NodeNext', types: [] } }));
+await writeFile(join(typedApp, 'tsconfig.web.json'), JSON.stringify({ extends: './tsconfig.json', include: ['web/*.ts'] }));
+// An unrelated backend type error must not prevent a valid UI publication.
+await writeFile(join(typedApp, 'src/main.ts'), "export const pending: number = 'unfinished backend edit';");
+await writeFile(join(typedWeb, 'index.html'), '<html><head></head><body>Typed interface</body></html>');
+await writeFile(join(typedWeb, 'app.ts'), 'const version: number = 1;');
+const typedUI = new Interface(typedData, typedApp); await typedUI.initialize(typedWeb);
+await writeFile(join(typedWeb, 'app.ts'), 'const version: number = 2;'); await typedUI.apply();
+assert.match(await readFile(join(typedUI.root, 'app.js'), 'utf8'), /version\s*= 2/);
+await writeFile(join(typedWeb, 'app.ts'), "const version: number = 'wrong';"); await assert.rejects(typedUI.apply(), /TypeScript check failed/);
+assert.equal((await typedUI.history()).generations.length, 2);
+await typedUI.switch(1); assert.match(await readFile(join(typedWeb, 'app.ts'), 'utf8'), /number = 1/); assert.match(await readFile(join(typedUI.root, 'app.js'), 'utf8'), /version\s*= 1/);
+await typedUI.switch(2); assert.match(await readFile(join(typedWeb, 'app.ts'), 'utf8'), /number = 2/);
+console.log('TypeScript UI generations passed: isolated web check, matching compiled assets, type-error rejection and source rollback.');
