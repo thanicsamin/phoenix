@@ -38,7 +38,9 @@ async function boot(expected) {
     assert.equal(await readFile(join(data, '.working-generation'), 'utf8'), '3');
     return output;
   } finally {
-    child.kill('SIGTERM'); await new Promise(resolve => child.once('exit', resolve));
+    if (child.exitCode === null && child.signalCode === null) {
+      const exited = new Promise(resolve => child.once('exit', resolve)); child.kill('SIGTERM'); await exited;
+    }
   }
 }
 await boot('FIXTURE_READY');
