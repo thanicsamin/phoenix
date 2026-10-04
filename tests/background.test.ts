@@ -61,7 +61,7 @@ test('restart catches up overdue jobs in archived side chats once and restores i
   const repeating = await host.addJob(side.id, { name: 'Missed intervals', prompt: 'Catch up', everyMinutes: 5, nextRunAt: new Date(0).toISOString() });
   const interrupted = await host.addJob('main', { name: 'Interrupted old one-shot', prompt: 'Resume', everyMinutes: 0 });
   // Also recover metadata written by earlier versions, which consumed at start.
-  Object.assign(interrupted, { running: true, enabled: false, nextRunAt: null }); await host.save();
+  Object.assign(interrupted, { running: false, enabled: false, nextRunAt: null, lastError: 'Interrupted by restart. Run again when ready.' }); await host.save();
   const restored = new Host(config, directory, directory); await restored.initialize(); restored.createSession = host.createSession;
   t.after(() => restored.close());
   await recoverJobs(restored); await settleJobs(restored); tick(restored); await settleJobs(restored);

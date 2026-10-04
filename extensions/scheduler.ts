@@ -45,7 +45,7 @@ export function tick(host: Host, now = Date.now()) {
 }
 
 export async function recoverJobs(host: Host, now = Date.now()) {
-  for (const chat of host.records) for (const job of chat.jobs) if (job.running) {
+  for (const chat of host.records) for (const job of chat.jobs) if (job.running || job.lastError === 'Interrupted by restart. Run again when ready.') {
     job.running = false;
     job.enabled = true;
     job.nextRunAt = new Date(now).toISOString();
