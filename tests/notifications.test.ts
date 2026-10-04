@@ -33,3 +33,14 @@ test('opt-in notifications deduplicate replies and approvals, use private bodies
   notifications.reset(); await new Promise(resolve => setImmediate(resolve)); assert.equal(document.title, 'Phoenix'); assert.equal(dismissed, 1);
   notifications.update([{ ...chat, notice: { id: 'three' } }], 'main'); await new Promise(resolve => setImmediate(resolve)); assert.equal(sent.length, 3);
 });
+test('logout cancels a reply still waiting for worker registration', async () => {
+  let ready; const sent = [];
+  const button = { setAttribute() {}, addEventListener() {} }; const status = {};
+  const document = { hidden: true, hasFocus: () => false, title: 'Phoenix', addEventListener() {}, querySelector: selector => selector === '#notifications' ? button : status };
+  const Notification = { permission: 'granted' }; const window = { isSecureContext: true, Notification, addEventListener() {} };
+  const registration = { showNotification: async (...args) => sent.push(args), getNotifications: async () => [] };
+  const navigator = { serviceWorker: { register: async () => registration, ready: new Promise(resolve => { ready = resolve; }), addEventListener() {} } };
+  runInNewContext(source, { window, document, navigator, Notification, localStorage: { getItem: () => 'true' } });
+  const notifications = window.initNotifications({ selectChat() {} }); notifications.update([{ id: 'main' }], 'main'); notifications.update([{ id: 'main', notice: { id: 'late', type: 'reply' } }], 'main');
+  notifications.reset(); ready(registration); await new Promise(resolve => setImmediate(resolve)); assert.deepEqual(sent, []); assert.equal(document.title, 'Phoenix');
+});

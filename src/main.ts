@@ -90,6 +90,7 @@ async function start() {
     const setupPath = join(dataDir, 'setup.json');
     const previous = await readFile(setupPath, 'utf8').catch(caught => { const error = errorOf(caught); if (error.code !== 'ENOENT') throw error; return null; });
     const records = JSON.stringify(host.records);
+    const folders = JSON.stringify(host.folders);
     const workspace = await host.workspaceFiles.snapshot();
     await saveSetup(host, input);
     host.restarting = true;
@@ -99,6 +100,7 @@ async function start() {
         log.error('setup.import_failed', { error });
         if (previous === null) await rm(setupPath, { force: true }); else await writeFile(setupPath, previous, { mode: 0o600 });
         await writeFile(join(dataDir, 'chats.json'), records, { mode: 0o600 });
+        await writeFile(join(dataDir, 'folders.json'), folders, { mode: 0o600 });
         await host.workspaceFiles.restore(workspace);
         currentHost = await start();
         const chat = await currentHost.getChat('main'); chat.error = 'Import failed. Your previous setup was restored.'; currentHost.changed();

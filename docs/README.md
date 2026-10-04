@@ -106,6 +106,25 @@ are shared, so keep secrets out of them.
 
 ## Chats and background work
 
+**New chat** opens immediately at the top of the unpinned chats and inherits
+the current model/thinking level. The initial prompt supplies a quick title;
+the agent can shorten it with its `chat` tool during the same turn. No separate
+model request is made. Rename with the chat's **⋯**, right click or long press;
+an owner-chosen name is never overwritten automatically. The main chat stays
+first and pinned chats stay above the other chats.
+
+Use the sidebar search and folder filter to find chats. Diary, Shopping and
+Todo are initial folders; **⋯** beside the filter adds, renames or removes a
+folder. Chat details moves a chat between folders and opens its memory.
+Removing a folder keeps its chats and jobs. `Ctrl/Cmd+K` focuses chat search;
+`Ctrl/Cmd+Shift+O` opens a new chat.
+
+**Delete** in chat details asks for confirmation, then stops that chat's work
+and removes its history, jobs, browser profile, attachments and private journal.
+Other open windows return to the main chat. Shared owner memory and arbitrary
+workspace files remain. Interrupted deletions complete during startup before
+jobs can run. The main chat cannot be deleted; archive a side chat to keep its data.
+
 Main chat and side chats have separate Pi sessions, histories, browser profiles,
 model choices and jobs. They share a persistent workspace. **Files** lets you
 read, edit, preview and download its contents: `AGENTS.md` (system prompt),
@@ -311,6 +330,12 @@ continue to work. External email/channel runs cannot access the private memory
 tool. This is an original implementation inspired by
 [OptMem](https://github.com/VictorTaelin/OptMem); it includes none of that project's code.
 
+The agent updates reusable preferences, decisions and useful outcomes during
+owner chats, searching before adding a duplicate. Task and diary notes stay
+in that chat. `scope=owner` shares durable personal facts across owner chats
+under **Files → memory → owner**. Raw notes survive compaction, and a correction
+appends a dated note superseding the old fact rather than rewriting its history.
+
 Enable browser notifications in **Settings** for replies, failures and approvals
 in background chats. Notification bodies do not include private message text.
 The page must remain open and connected; there is no push service or closed-tab
@@ -318,6 +343,31 @@ delivery. HTTPS or localhost is required, and OS/browser notification settings
 still apply. Unread activity also appears in the tab title.
 
 ## Credentials
+
+The native `permissions` extension also enforces small information-flow checks
+through Pi's tool hooks, with no policy service or additional dependency.
+Web/email reads and command output mark the chat as containing untrusted data.
+Finances, memory reads and recognized credential/private-file paths mark it
+as containing private data. After outside reads, commands, edits, jobs, shared
+memory changes, unknown tools and external writes require a specific owner
+approval. After private reads, outgoing requests (including browser navigation),
+shell commands and custom tools require approval. Local UI previews and ordinary
+public browsing continue while only the untrusted marker is set.
+Automatic channel replies also require a specific approval after private reads;
+they cannot bypass the tool hooks by sending the model's final answer directly.
+
+These checks use **Allow once**, never a remembered tool-wide approval. CAPTCHA
+consent cannot authorize sending private data. Markers persist in chat metadata
+across compaction, idle unloading and restart; a new chat starts separately.
+Only rule/tool/chat IDs are logged, not tool arguments or private content.
+
+This is targeted protection, not OpenAPPA's formal engine or an OS sandbox.
+Arbitrary file names cannot reliably identify confidential content, extensions
+can perform their own I/O, and an approved shell command has the agent's full
+container privileges. Owner-installed code and model providers remain trusted;
+the owner can change policy or roll back the agent. The built-in checks reduce
+prompt-injection and accidental-sharing paths without promising isolation from
+a compromised extension or process.
 
 Choose a provider and enter its API key in Settings, or set its Pi environment
 variable (for example `OPENROUTER_API_KEY`). Saved keys take precedence over

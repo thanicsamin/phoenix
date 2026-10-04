@@ -19,6 +19,7 @@
   <script src="/notifications.js" defer></script>
   <script src="/previews.js" defer></script>
   <script src="/plaid.js" defer></script>
+  <script src="/chats.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
@@ -39,6 +40,8 @@
     <aside class="sidebar" id="sidebar">
       <a class="brand" href="/"><span class="mark" aria-hidden="true"><img src="/bird.svg" alt=""></span><span>Phoenix</span></a>
       <button id="new-chat" class="new-chat" aria-label="New chat">＋ <span>New chat</span></button>
+      <input id="chat-search" type="search" placeholder="Search chats…" aria-label="Search chats" autocomplete="off">
+      <div class="folder-filter"><select id="chat-folder-filter" aria-label="Filter chats by folder"><option value="all">All chats</option></select><button id="manage-folders" type="button" aria-label="Manage folders" title="Manage folders">⋯</button></div>
       <div id="chat-list" class="chat-list" aria-label="Chats"></div>
       <button id="pin-chat" type="button" aria-pressed="false" hidden>Pin chat</button>
       <button id="archive-chat" type="button" aria-label="Archive chat" hidden>Archive chat</button>
@@ -50,7 +53,7 @@
     </aside>
     <main>
       <header class="topbar">
-        <div class="chat-heading"><button id="chat-menu" class="header-button" aria-label="Chats" aria-expanded="false" aria-controls="sidebar">☰</button><span id="agent-name" class="sr-only">Phoenix</span><span id="chat-title">Main chat</span></div>
+        <div class="chat-heading"><button id="chat-menu" class="header-button" aria-label="Chats" aria-expanded="false" aria-controls="sidebar">☰</button><span id="agent-name" class="sr-only">Phoenix</span><span id="chat-title">Main chat</span><button id="chat-details" class="header-button" aria-label="Chat details" title="Rename or move chat">⋯</button></div>
         <div class="header-actions"><span id="connection" class="connection">Connecting…</span><button id="refresh-ui" class="header-button" hidden>Refresh UI</button><button id="browser" class="header-button" hidden>Browser</button><button id="jobs" class="header-button">Jobs</button><button id="mobile-settings" class="header-button" aria-label="Settings">⚙</button></div>
       </header>
       <div class="conversation"><div class="chat-scroll" id="chat-scroll">
@@ -148,7 +151,9 @@
     </form>
   </dialog>
   <dialog id="chat-dialog">
-    <form id="chat-form"><button id="close-chat" class="dialog-close" type="button" aria-label="Close new chat">×</button><h2>New chat</h2><label for="chat-name">Name</label><input id="chat-name" required maxlength="100" placeholder="Travel"><button class="primary" type="submit">Create</button><p id="chat-error" class="error" role="alert"></p></form>
+    <form id="chat-form"><button id="close-chat" class="dialog-close" type="button" aria-label="Close chat details">×</button><h2>Chat details</h2><label for="chat-name">Name</label><input id="chat-name" required maxlength="100"><label for="chat-folder">Folder</label><select id="chat-folder"><option value="">Unfiled</option></select><div class="chat-detail-actions"><button class="primary" type="submit">Save</button><button id="chat-memory" type="button">Memory</button><button id="delete-chat" type="button" hidden>Delete</button></div><p id="chat-error" class="error" role="alert"></p></form>
   </dialog>
+  <dialog id="delete-chat-dialog" aria-label="Delete chat"><h2>Delete <span id="delete-chat-name"></span>?</h2><p class="muted">Deletes history, jobs, browser session, attachments and this chat’s memory. Shared memory and workspace files remain.</p><div class="chat-detail-actions"><button id="cancel-delete-chat" type="button">Cancel</button><button id="confirm-delete-chat" class="primary" type="button">Delete permanently</button></div><p id="delete-chat-error" class="error" role="alert"></p></dialog>
+  <dialog id="folders-dialog"><form id="folders-form"><button id="close-folders" class="dialog-close" type="button" aria-label="Close folders">×</button><h2>Folders</h2><label for="folder-target">Folder</label><select id="folder-target"><option value="">New folder</option></select><label for="folder-name">Name</label><input id="folder-name" required maxlength="60" placeholder="Diary, shopping, todo…"><div class="chat-detail-actions"><button class="primary" type="submit">Save</button><button id="remove-folder" type="button" hidden>Remove folder</button></div><p class="muted">Removing a folder keeps its chats.</p><p id="folder-error" class="error" role="alert"></p></form></dialog>
 </body>
 </html>

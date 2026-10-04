@@ -49,6 +49,15 @@ button, a, input, textarea, select { outline-offset: 3px; }
 .brand { display: flex; align-items: center; gap: 11px; text-decoration: none; font-size: 17px; font-weight: 600; padding: 0 10px; }
 .new-chat { margin-top: 28px; display: flex; align-items: center; gap: 10px; text-align: left; }
 .chat-list { margin-top: 12px; flex: 1; overflow: auto; min-height: 0; }
+#chat-search { margin: 10px 0 6px; padding: 8px 10px; font-size: 13px; }
+.folder-filter, .chat-row, .chat-detail-actions { display: flex; gap: 6px; align-items: center; }
+.folder-filter select { margin: 0; padding: 7px 10px; font-size: 12px; min-width: 0; flex: 1; }
+.folder-filter button { padding: 6px 9px; }
+.chat-row .chat-link { min-width: 0; flex: 1; }
+.chat-more { border: 0; padding: 8px; opacity: 0; flex-shrink: 0; }
+.chat-row:hover .chat-more, .chat-row:focus-within .chat-more { opacity: 1; }
+.chat-detail-actions { margin-top: 14px; }
+@media (hover: none) { .chat-more { opacity: 1; } }
 .chat-link { display: flex; align-items: center; justify-content: space-between; gap: 8px; text-align: left; border: 0; width: 100%; margin: 2px 0; }
 .chat-link.selected { background: var(--selected); font-weight: 500; }
 .chat-link span { white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }

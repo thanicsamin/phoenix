@@ -13,6 +13,9 @@ export const jobSchema = z.strictObject({
 });
 export const modelSchema = z.strictObject({ provider: z.enum(modelProviders), id: z.string().min(1) });
 export const thinkingSchema = z.enum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+export const validLabel = (value: string) => [...value].every(char => char.charCodeAt(0) >= 32 && char.charCodeAt(0) !== 127);
+export const folderSchema = z.string().trim().min(1).max(60).refine(validLabel);
+export const foldersSchema = z.array(folderSchema).max(32).refine(names => new Set(names.map(name => name.toLowerCase())).size === names.length, 'Folder names must be unique.');
 const publicWebUrl = z.url().refine(value => {
   if (!URL.canParse(value)) return false;
   const url = new URL(value);
@@ -36,6 +39,7 @@ export const configSchema = z.strictObject({
     browser: z.strictObject({ headless: z.boolean().optional() }).optional(),
     internet: z.strictObject({}).default({}),
     memory: z.strictObject({}).default({}),
+    chats: z.strictObject({}).default({}),
     files: z.strictObject({}).default({}),
     system: z.strictObject({}).default({}),
     scheduler: z.strictObject({}).default({}),
@@ -50,8 +54,10 @@ export const configSchema = z.strictObject({
     }).optional(),
   }),
   pi: z.strictObject({ extensions: z.array(z.string()).default([]), skills: z.array(z.string()).default([]) }).default({ extensions: [], skills: [] }),
-  chats: z.array(z.strictObject({ name: z.string().min(1).max(100), model: modelSchema.optional(), thinking: thinkingSchema.optional(), jobs: z.array(jobSchema).default([]) })).max(100).default([]),
+  folders: foldersSchema.default(['Diary', 'Shopping', 'Todo']),
+  chats: z.array(z.strictObject({ name: z.string().min(1).max(100), main: z.boolean().optional(), folder: folderSchema.optional(), model: modelSchema.optional(), thinking: thinkingSchema.optional(), jobs: z.array(jobSchema).default([]) })).max(100).default([]),
 }).superRefine((config, ctx) => {
+  if (config.chats.filter(chat => chat.main).length > 1) ctx.addIssue({ code: 'custom', path: ['chats'], message: 'Choose one main chat.' });
   if (config.extensions.web.url && config.extensions.tunnel) {
     ctx.addIssue({ code: 'custom', path: ['extensions', 'web', 'url'], message: 'Choose a direct web URL or a tunnel.' });
   }

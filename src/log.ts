@@ -11,7 +11,7 @@ export function registerSecret(value: unknown) {
   if (typeof value === 'string' && value.length >= 8) secrets.add(value);
 }
 for (const [name, value] of Object.entries(process.env)) if (sensitive.test(name) && !name.endsWith('_FILE')) registerSecret(value);
-function redact(value: string) {
+export function redact(value: string) {
   for (const secret of secrets) value = value.split(secret).join('[redacted]');
   return value.replace(/\b(?:oc_sk_|sk-|xox[baprs]-)[A-Za-z0-9_-]+/g, '[redacted]')
     .replace(/\bBearer\s+\S+/gi, 'Bearer [redacted]')

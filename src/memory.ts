@@ -9,9 +9,9 @@ import { Workspace } from './workspace.ts';
 export class MemoryJournal {
   workspace: Workspace; root: string;
   constructor(workspace: string | Workspace, chatId: string) {
-    if (!/^(main|[0-9a-f-]{36})$/.test(chatId)) throw Error('Choose a valid chat.');
+    if (!/^(owner|main|[0-9a-f-]{36})$/.test(chatId)) throw Error('Choose a valid chat.');
     this.workspace = workspace instanceof Workspace ? workspace : new Workspace(workspace);
-    this.root = `memory/chats/${chatId}`;
+    this.root = chatId === 'owner' ? 'memory/owner' : `memory/chats/${chatId}`;
   }
   async folder(relative: string) {
     let prefix = '';

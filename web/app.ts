@@ -18,7 +18,7 @@ const draftMessages = new Map<string, string>();
 let uploading = 0;
 let mutations = 0;
 let queueEdit: QueueEdit | undefined;
-const notifications = window.initNotifications({ selectChat: async id => { if (!signedIn) return; switchChat(id); closeChats(); await refresh().catch(() => {}); } });
+const notifications = window.initNotifications({ selectChat: async id => { if (!signedIn || !latest?.chats.some(chat => chat.id === id)) return; switchChat(id); closeChats(); await refresh().catch(() => {}); } });
 const attachments = () => drafts.get(chatId) || [];
 const loadedUI = $('meta[name="ui-version"]')?.content;
 let pendingUI: string | undefined;
@@ -95,14 +95,21 @@ async function api<P extends string>(path: P, body?: unknown): Promise<APIResult
   } finally { if (body !== undefined) mutations--; }
 }
 async function refresh() {
+  const generation = authGeneration;
   const requestedChat = chatId;
   if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ chatId }));
-  const state = await api(`/api/state?chat=${encodeURIComponent(requestedChat)}`);
-  if (state && requestedChat === chatId) render(state);
+  try {
+    const state = await api(`/api/state?chat=${encodeURIComponent(requestedChat)}`);
+    if (state && signedIn && generation === authGeneration && requestedChat === chatId) render(state);
+  } catch (error) {
+    if (error instanceof Error && 'status' in error && error.status === 404 && requestedChat !== 'main' && requestedChat === chatId && signedIn && generation === authGeneration) {
+      switchChat('main'); revision = -1; $('#messages').replaceChildren(); await refresh();
+    } else throw error;
+  }
 }
 function showLogin() {
   authGeneration++; signedIn = false; latest = undefined; pendingUI = undefined;
-  finances.reset(); cancelQueueEdit(); notifications.reset(); window.resetPreviews(true);
+  finances.reset(); chatUI.reset(); cancelQueueEdit(); notifications.reset(); window.resetPreviews(true);
   drafts.clear(); draftMessages.clear(); $('#message').value = ''; $('#messages').replaceChildren();
   $('#api-key').value = ''; $('#key-error').textContent = ''; $('#provider-status').textContent = '';
   $('#server-url').value = ''; $('#server-models').value = '';
@@ -202,6 +209,11 @@ function messageNode(role: string, text: string, queued = false, files: DraftFil
 }
 function render(state: ChatState) {
   latest = state;
+  const ids = new Set(state.chats.map(chat => chat.id));
+  let removedDrafts = false;
+  for (const id of draftMessages.keys()) if (!ids.has(id)) { draftMessages.delete(id); removedDrafts = true; }
+  for (const id of drafts.keys()) if (!ids.has(id)) { drafts.delete(id); removedDrafts = true; }
+  if (removedDrafts) persistDrafts();
   notifications.update(state.chats, state.chatId);
   revision = state.revision;
   $('#agent-name').textContent = state.name;
@@ -265,30 +277,21 @@ function render(state: ChatState) {
   $('#steer').hidden = !!queueEdit || !state.steerable || !!state.browser?.controlled; $('#steer').disabled = uploading > 0;
   $('#stop').hidden = !state.busy;
   $('#activity').textContent = state.browser?.controlled ? 'You control the browser · Agent paused' : state.approvals.length ? 'Waiting for your approval…' : state.tool ? `Using ${state.tool}…` : state.busy ? 'Thinking…' : '';
-  stableChildren('#chat-list', [chatId, showingArchived, state.chats], () => state.chats.filter(chat => !!chat.archived === showingArchived).map(chat => {
-    const button = document.createElement('button'); button.className = `chat-link${chat.id === chatId ? ' selected' : ''}`;
-    button.setAttribute('aria-current', String(chat.id === chatId));
-    const title = document.createElement('span'); title.textContent = chat.title;
-    const status = document.createElement('small'); status.textContent = (chat.pinned ? '⌖ ' : '') + (chat.approval ? 'Approval' : chat.busy ? 'Working' : chat.jobs ? `${chat.jobs} job${chat.jobs === 1 ? '' : 's'}` : '');
-    if (chat.pinned) button.title = 'Pinned chat';
-    button.append(title, status); button.addEventListener('click', async () => {
-      switchChat(chat.id); revision = -1; closeChats(); $('#messages').replaceChildren();
-      try { await refresh(); } catch (caught) { const error = caught instanceof Error ? caught : new Error(String(caught)); $('#agent-error').textContent = error.message; }
-    });
-    return button;
-  }));
+  chatUI.render(state, showingArchived);
   stableChildren('#approvals', state.approvals, () => state.approvals.map(approval => {
     const card = document.createElement('div'); card.className = 'approval-card';
     const args = approval.args && typeof approval.args === 'object' ? approval.args as Record<string, unknown> : {};
     const verification = approval.tool === 'browser_verification';
     const title = document.createElement('strong'); title.textContent = verification ? args.attempts ? 'Still blocked after 3 tries' : 'Website needs verification' : `Allow ${approval.tool}?`;
     const preview = document.createElement('pre'); preview.textContent = verification ? String(args.site || '') : JSON.stringify(approval.args, null, 2);
+    if (approval.reason) { const reason = document.createElement('p'); reason.className = 'muted'; reason.textContent = approval.reason; card.append(reason); }
     const actions = document.createElement('div'); actions.className = 'approval-actions';
     if (verification) {
       const take = document.createElement('button'); take.textContent = 'Take control';
       take.addEventListener('click', () => window.openBrowser(true)); actions.append(take);
     }
     for (const [label, allow, remember] of verification ? [['Try CAPTCHA', true, false], ['Stop', false, false]] as const : [['Deny', false, false], ['Allow once', true, false], ['Allow in this chat', true, true]] as const) {
+      if (remember && approval.reason) continue;
       const button = document.createElement('button'); button.textContent = label;
       button.addEventListener('click', async () => { try { await api('/api/approval', { id: approval.id, allow, remember }); revision = -1; } catch (caught) { const error = caught instanceof Error ? caught : new Error(String(caught)); $('#agent-error').textContent = error.message; } });
       actions.append(button);
@@ -329,7 +332,10 @@ async function poll() {
         const state = socket?.readyState === WebSocket.OPEN ? null : await api(`/api/state?chat=${encodeURIComponent(chatId)}&after=${revision}`);
         if (state && requestedChat === chatId) render(state);
       }
-      catch (caught) { const error = caught instanceof Error ? caught : new Error(String(caught)); $('#connection').textContent = 'Reconnecting…'; $('#agent-error').textContent = error.message; }
+      catch (caught) {
+        if (caught instanceof Error && 'status' in caught && caught.status === 404 && chatId !== 'main') { await refresh().catch(() => {}); continue; }
+        const error = caught instanceof Error ? caught : new Error(String(caught)); $('#connection').textContent = 'Reconnecting…'; $('#agent-error').textContent = error.message;
+      }
       await new Promise(resolve => setTimeout(resolve, document.hidden ? 5000 : 800));
     }
   } finally { polling = false; }
@@ -370,16 +376,6 @@ $('#message').addEventListener('keydown', event => {
 });
 for (const button of document.querySelectorAll<HTMLElement>('[data-prompt]')) button.addEventListener('click', () => { $('#message').value = button.dataset.prompt || ''; $('#message').focus(); });
 $('#stop').addEventListener('click', async () => { try { await api('/api/cancel', { chatId }); } catch (caught) { const error = caught instanceof Error ? caught : new Error(String(caught)); $('#agent-error').textContent = error.message; } });
-$('#new-chat').addEventListener('click', async () => {
-  closeChats(); $('#chat-dialog').showModal(); $('#chat-name').focus();
-});
-$('#close-chat').addEventListener('click', () => $('#chat-dialog').close());
-$('#chat-form').addEventListener('submit', async event => {
-  event.preventDefault(); (event.submitter as HTMLButtonElement).disabled = true;
-  try { const chat = await api('/api/new', { title: $('#chat-name').value }); switchChat(chat.id); revision = -1; $('#chat-name').value = ''; $('#chat-error').textContent = ''; $('#chat-dialog').close(); await refresh(); }
-  catch (caught) { const error = caught instanceof Error ? caught : new Error(String(caught)); $('#chat-error').textContent = error.message; }
-  finally { (event.submitter as HTMLButtonElement).disabled = false; }
-});
 $('#settings').addEventListener('click', openSettings);
 $('#mobile-settings').addEventListener('click', openSettings);
 $('#connect-key').addEventListener('click', openSettings);
@@ -412,6 +408,11 @@ $('#archive-chat').addEventListener('click', async () => {
   } catch (caught) { const error = caught instanceof Error ? caught : new Error(String(caught)); $('#agent-error').textContent = error.message; }
 });
 const finances = window.initPlaid({ api });
+const chatUI = window.initChats({ api, refresh,
+  selectChat: async id => { switchChat(id); showingArchived = false; revision = -1; closeChats(); $('#messages').replaceChildren(); await refresh(); $('#message').focus(); },
+  openSidebar: () => { if ($('#chat-menu').getAttribute('aria-expanded') !== 'true') $('#chat-menu').click(); },
+  openMemory: id => openFiles(`memory/chats/${id}`),
+});
 window.initBrowserControl({ api, chat: () => chatId, csrf: () => csrf, refresh });
 
 function renderJobs() {
@@ -589,10 +590,15 @@ async function loadHistory() {
     }));
   }
 }
-$('#files').addEventListener('click', async () => {
+async function openFiles(path = '') {
   closeChats(); clearEditor(); $('#new-file-form').hidden = true; $('#file-status').textContent = ''; $('#files-dialog').showModal();
-  try { await listFiles(); await loadHistory(); } catch (caught) { const error = caught instanceof Error ? caught : new Error(String(caught)); $('#file-status').textContent = error.message; }
-});
+  try { await listFiles(path); await loadHistory(); } catch (caught) {
+    const error = caught instanceof Error ? caught : new Error(String(caught));
+    if ('status' in error && error.status === 404 && path.startsWith('memory/chats/')) { directory = path; $('#file-list').replaceChildren(); $('#file-directory').textContent = path; $('#file-back').disabled = false; $('#file-status').textContent = 'No memories saved yet.'; }
+    else $('#file-status').textContent = error.message;
+  }
+}
+$('#files').addEventListener('click', () => openFiles());
 $('#close-files').addEventListener('click', async () => { if (await discardFile()) $('#files-dialog').close(); });
 $('#files-dialog').addEventListener('cancel', async event => { event.preventDefault(); if (await discardFile()) $('#files-dialog').close(); });
 $('#file-list-back').addEventListener('click', async () => { if (await discardFile()) { clearEditor(); $('#file-list').querySelector<HTMLElement>('[aria-current="true"]')?.focus(); } });

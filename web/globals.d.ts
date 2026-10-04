@@ -158,6 +158,7 @@ interface Elements {
 
 declare global {
   interface Window {
+    initChats: (options: import('./chats.ts').ChatOptions) => { render: (state?: ChatState, archived?: boolean) => void; reset: () => void };
     markdownit: typeof MarkdownIt; katex: typeof KaTeX; DOMPurify: DOMPurify;
     renderMarkdown: (text: string) => DocumentFragment | HTMLElement;
     previewPDF: (image: HTMLImageElement, url: string) => void;

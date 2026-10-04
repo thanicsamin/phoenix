@@ -13,7 +13,7 @@ docker compose up --build
 The logs print your link and password. Connect a provider in Settings.
 OpenCode Go/Zen, OpenRouter, Ollama, LM Studio and other Pi providers are supported.
 
-- Separate chats, scheduled jobs and incoming email.
+- Separate chats with folders, scheduled jobs and incoming email.
 - Browser automation with one-button owner control.
 - Files, memory, attachments, Markdown and math.
 - Extensions and editable UI/runtime with generation rollback.

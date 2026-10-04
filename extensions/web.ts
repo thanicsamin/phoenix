@@ -25,6 +25,7 @@ const files: Record<string, [URL, string]> = {
   '/': [new URL('../web/index.html', import.meta.url), 'text/html; charset=utf-8'],
   '/plaid.js': [new URL('../web/plaid.js', import.meta.url), 'text/javascript; charset=utf-8'],
   '/app.js': [new URL('../web/app.js', import.meta.url), 'text/javascript; charset=utf-8'],
+  '/chats.js': [new URL('../web/chats.js', import.meta.url), 'text/javascript; charset=utf-8'],
   '/voice.js': [new URL('../web/voice.js', import.meta.url), 'text/javascript; charset=utf-8'],
   '/theme.js': [new URL('../web/theme.js', import.meta.url), 'text/javascript; charset=utf-8'],
   '/browser.js': [new URL('../web/browser.js', import.meta.url), 'text/javascript; charset=utf-8'],
@@ -208,6 +209,23 @@ export function createWebServer(host: Host, logger = log) {
         const { chatId, pinned } = await readBody(request);
         return send(200, await host.pinChat(chatId, pinned));
       }
+      if (request.method === 'POST' && path === '/api/chat/delete') {
+        if (auth.preview) return send(403, { error: 'Sign in as the owner to delete chats.' });
+        const { chatId } = await readBody(request);
+        return send(200, await host.deleteChat(chatId));
+      }
+      if (request.method === 'POST' && path === '/api/chat/update') {
+        if (auth.preview) return send(403, { error: 'Sign in as the owner to organize chats.' });
+        const input = await readJson(request, 40000);
+        if (!input || typeof input !== 'object' || Array.isArray(input)) return send(400, { error: 'Choose a chat name or folder.' });
+        return send(200, await host.updateChat(input.chatId, { title: input.title, folder: input.folder }));
+      }
+      if (request.method === 'POST' && path === '/api/folders') {
+        if (auth.preview) return send(403, { error: 'Sign in as the owner to manage folders.' });
+        const input = await readJson(request, 40000);
+        if (!input || typeof input !== 'object' || Array.isArray(input)) return send(400, { error: 'Choose a folder.' });
+        return send(200, await host.updateFolder(input));
+      }
       if (request.method === 'POST' && path === '/api/logout') {
         host.auth.logout(token); host.changed?.();
         response.setHeader('Set-Cookie', 'phoenix=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');
@@ -283,8 +301,9 @@ export function createWebServer(host: Host, logger = log) {
         await chat.session.abort(); chat.session.clearQueue?.(); chat.steering = []; host.changed(); return send(200, {});
       }
       if (request.method === 'POST' && path === '/api/new') {
-        const { title } = await readBody(request);
-        return send(201, await host.createChat(title));
+        const input = await readJson(request, 40000);
+        if (!input || typeof input !== 'object' || Array.isArray(input)) return send(400, { error: 'Choose a chat name or folder.' });
+        return send(201, await host.createChat(input.title, undefined, input.folder, input.fromChatId));
       }
       if (request.method === 'POST' && path === '/api/approval') {
         const { id, allow, remember = false } = await readBody(request);

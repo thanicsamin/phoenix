@@ -15,7 +15,9 @@ export type NativeExtension = ExtensionFactory;
 export interface ChatRecord {
   id: string; title: string; jobs: Job[]; permissions: string[];
   route?: string; model?: ModelSelection; thinking?: Thinking;
-  archived?: boolean; pinned?: boolean; lastSentAt?: number;
+  archived?: boolean; pinned?: boolean; lastSentAt?: number; folder?: string; autoTitle?: boolean;
+  deleted?: boolean;
+  readRisk?: number;
 }
 export interface StoredAttachment extends Attachment { role: string; used: boolean }
 export interface QueuedMessage {

@@ -12,14 +12,14 @@ import type { WebServer } from './socket.ts';
 import { errorOf } from './errors.ts';
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
-import { readFile, writeFile, rename } from 'node:fs/promises';
+import { readFile, writeFile, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { modelChoices, providerChoices } from './models.ts';
 import { parseEndpoint, saveEndpoint } from './local-models.ts';
-import { jobSchema, modelSchema, thinkingSchema } from './config.ts';
+import { jobSchema, modelSchema, thinkingSchema, folderSchema, foldersSchema, validLabel } from './config.ts';
 import { Files } from './files.ts';
 import { Workspace } from './workspace.ts';
-import { log } from './log.ts';
+import { log, redact } from './log.ts';
 
 export function textOf(message: unknown): string {
   if (!message || typeof message !== 'object' || !('content' in message)) return '';
@@ -168,7 +168,9 @@ export class Host extends EventEmitter {
   config: Config; dataDir: string; workspace: string; revision = 0; closing = false;
   extensions: Record<string, string> = {}; chats = new Map<string, Promise<Chat>>();
   records: ChatRecord[] = []; loaded = new Map<string, Chat>();
-  approvals = new Map<string, { id: string; chatId: string; tool: string; args: unknown; resolve: (allow: boolean) => void; timer: NodeJS.Timeout; cleanup: Cleanup }>();
+  folders: string[] = [];
+  deleting = new Set<string>();
+  approvals = new Map<string, { id: string; chatId: string; tool: string; args: unknown; reason?: string; resolve: (allow: boolean) => void; timer: NodeJS.Timeout; cleanup: Cleanup }>();
   cleanups: Cleanup[] = []; sessionExtensions: NativeExtension[] = []; startedExtensions = new Set<string>();
   writeQueue: Promise<void>; files!: Files; workspaceFiles!: Workspace;
   createSession!: (id: string) => Promise<AgentSession>; modelRuntime!: ModelRuntime;
@@ -194,17 +196,36 @@ export class Host extends EventEmitter {
     if (!Array.isArray(this.records) || this.records.some(record => !/^(main|[0-9a-f-]{36})$/.test(record.id)
       || (record.archived !== undefined && typeof record.archived !== 'boolean') || (record.pinned !== undefined && typeof record.pinned !== 'boolean')
       || (record.lastSentAt !== undefined && (!Number.isSafeInteger(record.lastSentAt) || record.lastSentAt < 0))
+      || (record.folder !== undefined && !folderSchema.safeParse(record.folder).success)
+      || (record.autoTitle !== undefined && typeof record.autoTitle !== 'boolean')
+      || (record.deleted !== undefined && typeof record.deleted !== 'boolean')
+      || (record.readRisk !== undefined && (!Number.isInteger(record.readRisk) || record.readRisk < 0 || record.readRisk > 3))
       || typeof record.title !== 'string' || !Array.isArray(record.jobs) || !Array.isArray(record.permissions))) throw new Error('Invalid chat metadata.');
     if (!this.records.length) {
       this.records.push({ id: 'main', title: 'Main chat', jobs: [], permissions: [] });
+      let mainApplied = false;
       for (const template of this.config.chats) {
-        const record = template.name === 'Main chat' ? this.records[0] : { id: randomUUID(), title: template.name, jobs: [], permissions: [] };
-        record.model = template.model; record.thinking = template.thinking;
+        const useMain = template.main === true || !mainApplied && template.main === undefined && template.name === 'Main chat';
+        const record = useMain ? this.records[0] : { id: randomUUID(), title: template.name, jobs: [], permissions: [] };
+        if (useMain) { mainApplied = true; record.title = template.name; }
+        record.model = template.model; record.thinking = template.thinking; record.folder = template.folder;
         record.jobs = template.jobs.map(job => this.jobRecord(job));
         if (record.id !== 'main') this.records.push(record);
       }
       await this.save();
     }
+    try { this.folders = foldersSchema.parse(JSON.parse(await readFile(join(this.dataDir, 'folders.json'), 'utf8'))); }
+    catch (caught) { const error = errorOf(caught); if (error.code !== 'ENOENT') throw error; this.folders = [...(this.config.folders || ['Diary', 'Shopping', 'Todo'])]; }
+    // Keep chats accessible after a partial folder update or an older-generation rollback.
+    for (const record of this.records) if (record.folder) {
+      const existing = this.folders.find(folder => folder.toLowerCase() === record.folder!.toLowerCase());
+      if (existing) record.folder = existing;
+      else if (this.folders.length < 32) this.folders.push(record.folder);
+      else delete record.folder;
+    }
+    await this.saveFolders();
+    // Complete interrupted deletions before any sessions or scheduled jobs start.
+    for (const record of [...this.records]) if (record.deleted) await this.deleteChat(record.id);
     const timer = setInterval(() => {
       for (const chat of this.loaded.values()) {
         if (chat.chatId !== 'main' && !chat.pending && !chat.browserControl?.controlled && Date.now() - chat.lastUsed > 5 * 60000 && ![...this.approvals.values()].some(item => item.chatId === chat.chatId)) this.unload(chat.chatId).catch(() => {});
@@ -221,13 +242,51 @@ export class Host extends EventEmitter {
   }
   record(id = 'main') {
     const record = this.records.find(chat => chat.id === id);
-    if (!record) throw Object.assign(new Error('Chat not found.'), { status: 404 });
+    if (!record || record.deleted || this.deleting.has(id)) throw Object.assign(new Error('Chat not found.'), { status: 404 });
     return record;
   }
-  async createChat(title = 'Side chat', route?: string) {
+  saveFolders() {
+    const body = JSON.stringify(this.folders); const path = join(this.dataDir, 'folders.json');
+    const save = this.writeQueue.then(async () => { await writeFile(`${path}.tmp`, body, { mode: 0o600 }); await rename(`${path}.tmp`, path); });
+    this.writeQueue = save.catch(() => {}); this.changed(); return save;
+  }
+  async updateFolder(input: { name?: unknown; previous?: unknown; remove?: unknown }) {
+    const previous = input.previous;
+    if (previous !== undefined && (typeof previous !== 'string' || !this.folders.includes(previous))) throw Object.assign(Error('Choose an existing folder.'), { status: 400 });
+    if (input.remove !== undefined && typeof input.remove !== 'boolean') throw Object.assign(Error('Choose whether to remove the folder.'), { status: 400 });
+    if (input.remove) {
+      if (!previous) throw Object.assign(Error('Choose an existing folder.'), { status: 400 });
+      this.folders = this.folders.filter(name => name !== previous);
+      for (const record of this.records) if (record.folder === previous) delete record.folder;
+    } else {
+      const parsed = folderSchema.safeParse(input.name);
+      if (!parsed.success) throw Object.assign(Error('Choose a folder name of up to 60 characters.'), { status: 400 });
+      const name = parsed.data;
+      if (this.folders.some(folder => folder !== previous && folder.toLowerCase() === name.toLowerCase())) throw Object.assign(Error('That folder already exists.'), { status: 409 });
+      if (previous === undefined && this.folders.length >= 32) throw Object.assign(Error('Folder limit reached.'), { status: 409 });
+      this.folders = previous === undefined ? [...this.folders, name] : this.folders.map(folder => folder === previous ? name : folder);
+      for (const record of this.records) if (previous !== undefined && record.folder === previous) record.folder = name;
+    }
+    await this.saveFolders(); await this.save(); return {};
+  }
+  async updateChat(id: unknown, input: { title?: unknown; folder?: unknown; automatic?: boolean }) {
+    if (typeof id !== 'string') throw Object.assign(Error('Choose a chat.'), { status: 400 });
+    const record = this.record(id);
+    if (input.automatic && !record.autoTitle) return record; // Never overwrite an owner's chosen title.
+    if (input.title !== undefined && (typeof input.title !== 'string' || !input.title.trim() || input.title.length > 100 || !validLabel(input.title))) throw Object.assign(Error('Choose a chat name of up to 100 characters.'), { status: 400 });
+    if (input.folder !== undefined && (typeof input.folder !== 'string' || input.folder && !this.folders.includes(input.folder))) throw Object.assign(Error('Choose an existing folder.'), { status: 400 });
+    if (input.title !== undefined) { record.title = redact((input.title as string).trim()); record.autoTitle = false; }
+    if (input.folder !== undefined) record.folder = (input.folder as string) || undefined;
+    await this.save(); return record;
+  }
+  async createChat(title?: string, route?: string, folder?: string, fromChatId?: string) {
     if (this.records.length >= 100) throw Object.assign(new Error('Chat limit reached.'), { status: 409 });
-    if (typeof title !== 'string' || !title.trim() || title.length > 100) throw Object.assign(new Error('Choose a chat name of up to 100 characters.'), { status: 400 });
-    const record: ChatRecord = { id: randomUUID(), title: title.trim(), jobs: [], permissions: [], ...(route ? { route } : {}) };
+    if (title !== undefined && (typeof title !== 'string' || !title.trim() || title.length > 100 || !validLabel(title))) throw Object.assign(new Error('Choose a chat name of up to 100 characters.'), { status: 400 });
+    if (folder !== undefined && (typeof folder !== 'string' || folder && !this.folders.includes(folder))) throw Object.assign(Error('Choose an existing folder.'), { status: 400 });
+    if (fromChatId !== undefined && typeof fromChatId !== 'string') throw Object.assign(Error('Choose a source chat.'), { status: 400 });
+    const source = fromChatId === undefined ? undefined : this.record(fromChatId);
+    const record: ChatRecord = { id: randomUUID(), title: title?.trim() || 'New chat', autoTitle: !title && !route, lastSentAt: this.nextActivity(), folder: folder || undefined, jobs: [], permissions: [], ...(route ? { route } : {}) };
+    if (source) { record.model = source.model || this.config.model; record.thinking = this.loaded.get(source.id)?.session.thinkingLevel || source.thinking; }
     this.records.push(record); await this.save(); return record;
   }
   async archiveChat(id: unknown, archived: unknown) {
@@ -237,6 +296,34 @@ export class Host extends EventEmitter {
     record.archived = archived; await this.save();
     return { id, archived };
   }
+  async deleteChat(id: string) {
+    const record = this.records.find(record => record.id === id);
+    if (!record || this.deleting.has(id)) throw Object.assign(Error('Chat not found.'), { status: 404 });
+    if (id === 'main') throw Object.assign(Error('The main chat stays available.'), { status: 409 });
+    if (this.files.uploading || this.providerUpdating || this.closing || this.restarting) throw Object.assign(Error('Wait for uploads or setup changes to finish.'), { status: 409 });
+    this.deleting.add(id);
+    try {
+      const jobs = record.jobs;
+      record.deleted = true;
+      record.jobs = []; // Older generations cannot revive interrupted deleted jobs either.
+      try { await this.save(); } catch (error) { delete record.deleted; record.jobs = jobs; throw error; }
+      for (const approval of [...this.approvals.values()]) if (approval.chatId === id) await this.approve(approval.id, false);
+      const chat = await this.chats.get(id)?.catch(() => undefined);
+      chat?.cancelQueued();
+      await this.browserControls?.get(id)?.close();
+      if (chat) await chat.close();
+      await this.browserClosers?.get(id)?.();
+      this.loaded.delete(id); this.chats.delete(id);
+      await this.memoryQueue;
+      for (const file of [...this.files.items]) if (file.chatId === id) await this.files.remove(file.id, id);
+      for (const path of [join(this.dataDir, 'pi', 'sessions', id), join(this.dataDir, 'browser', id), join(this.workspace, 'uploads', id), join(this.workspace, 'memory', 'chats', id)]) await rm(path, { recursive: true, force: true });
+      const previous = this.records;
+      this.records = previous.filter(record => record.id !== id);
+      try { await this.save(); } catch (error) { this.records = previous; throw error; }
+      log.info('chat.deleted', { chatId: id });
+      return { id };
+    } finally { this.deleting.delete(id); this.changed(); }
+  }
   async pinChat(id: unknown, pinned: unknown) {
     if (typeof id !== 'string' || typeof pinned !== 'boolean') throw Object.assign(Error('Choose whether to pin this chat.'), { status: 400 });
     const record = this.record(id);
@@ -245,9 +332,10 @@ export class Host extends EventEmitter {
   }
   sent(id: string) {
     // A queue submission counts immediately; replies and scheduled runs do not.
-    this.record(id).lastSentAt = Math.max(Date.now(), ...this.records.map(record => (record.lastSentAt || 0) + 1));
+    this.record(id).lastSentAt = this.nextActivity();
     this.save().catch(error => log.error('chat.order_save_failed', { error }));
   }
+  nextActivity() { return Math.max(Date.now(), ...this.records.map(record => (record.lastSentAt || 0) + 1)); }
   async routeChat(route: string, title: string) {
     return this.records.find(chat => chat.route === route) || await this.createChat(title, route);
   }
@@ -289,7 +377,11 @@ export class Host extends EventEmitter {
     const pending = chat.pending;
     if (this.providerUpdating) throw Object.assign(Error('Provider settings are being updated. Try again shortly.'), { status: 409 });
     const result = chat.submit(input.message, source, input.images);
-    if (source === 'web' && chat.pending > pending) this.sent(id);
+    if (source === 'web' && chat.pending > pending) {
+      const record = this.record(id);
+      if (record.autoTitle && record.title === 'New chat') record.title = [...redact(message.trim() || 'Attachments').replace(/\s+/g, ' ')].filter(char => validLabel(char)).join('').split(' ').slice(0, 10).join(' ').slice(0, 80) || 'New chat';
+      this.sent(id);
+    }
     return result;
   }
   async steer(message: string, id = 'main', attachmentIds: string[] = []) {
@@ -311,15 +403,15 @@ export class Host extends EventEmitter {
     const chat = await this.getChat(id);
     const record = this.record(id);
     const snapshot = chat.state();
-    return { ...snapshot, browser: this.browserControls?.get(id)?.state(), models: this.modelRuntime ? modelChoices(this.modelRuntime, snapshot.model) : [], providers: this.modelRuntime ? providerChoices(this.modelRuntime) : [], revision: this.revision, uiVersion: this.ui?.version, internet: this.internet?.status(), chatId: id, title: record.title, archived: !!record.archived, pinned: !!record.pinned, extensions: this.extensions,
-      chats: [...this.records].sort((a, b) => Number(b.id === 'main') - Number(a.id === 'main') || Number(!!b.pinned) - Number(!!a.pinned) || (b.lastSentAt || 0) - (a.lastSentAt || 0)).map(({ id, title, jobs, archived, pinned }) => ({ id, title, archived: !!archived, pinned: !!pinned, jobs: jobs.filter(job => job.enabled).length,
+    return { ...snapshot, browser: this.browserControls?.get(id)?.state(), models: this.modelRuntime ? modelChoices(this.modelRuntime, snapshot.model) : [], providers: this.modelRuntime ? providerChoices(this.modelRuntime) : [], revision: this.revision, uiVersion: this.ui?.version, internet: this.internet?.status(), chatId: id, title: record.title, folder: record.folder, folders: this.folders, archived: !!record.archived, pinned: !!record.pinned, extensions: this.extensions,
+      chats: this.records.filter(chat => !chat.deleted).sort((a, b) => Number(b.id === 'main') - Number(a.id === 'main') || Number(!!b.pinned) - Number(!!a.pinned) || (b.lastSentAt || 0) - (a.lastSentAt || 0)).map(({ id, title, jobs, archived, pinned, folder }) => ({ id, title, folder, archived: !!archived, pinned: !!pinned, jobs: jobs.filter(job => job.enabled).length,
         busy: (this.loaded.get(id)?.pending || 0) > 0, notice: this.loaded.get(id)?.notice, approval: [...this.approvals.values()].find(item => item.chatId === id)?.id || false as const })), jobs: record.jobs,
-      approvals: [...this.approvals.values()].filter(approval => approval.chatId === id).map(({ id, tool, args }) => ({ id, tool, args })),
+      approvals: [...this.approvals.values()].filter(approval => approval.chatId === id).map(({ id, tool, args, reason }) => ({ id, tool, args, reason })),
     };
   }
   async exportSetup() {
     const workspace = await this.workspaceFiles.export();
-    return { ...this.config, workspace, instructions: workspace['AGENTS.md'] || this.config.instructions, chats: this.records.filter(chat => !chat.route).map(chat => ({ name: chat.title, ...(chat.model ? { model: chat.model } : {}), ...(chat.thinking ? { thinking: chat.thinking } : {}),
+    return { ...this.config, folders: this.folders, workspace, instructions: workspace['AGENTS.md'] || this.config.instructions, chats: this.records.filter(chat => !chat.route && !chat.deleted).map(chat => ({ name: chat.title, main: chat.id === 'main', ...(chat.folder ? { folder: chat.folder } : {}), ...(chat.model ? { model: chat.model } : {}), ...(chat.thinking ? { thinking: chat.thinking } : {}),
       jobs: chat.jobs.filter(job => job.enabled).map(({ name, prompt, everyMinutes, nextRunAt }) => ({ name, prompt, everyMinutes, ...(nextRunAt ? { nextRunAt } : {}) })),
     })) };
   }
@@ -365,21 +457,21 @@ export class Host extends EventEmitter {
     if (record.jobs.length >= 20) throw Object.assign(new Error('Job limit reached for this chat.'), { status: 409 });
     const job = this.jobRecord(input); record.jobs.push(job); await this.save(); return job;
   }
-  async requestApproval(chatId: string, tool: string, args: unknown, signal?: AbortSignal): Promise<boolean> {
-    if (tool !== 'browser_verification' && this.record(chatId).permissions.includes(tool)) return true;
+  async requestApproval(chatId: string, tool: string, args: unknown, signal?: AbortSignal, reason?: string): Promise<boolean> {
+    if (!reason && tool !== 'browser_verification' && this.record(chatId).permissions.includes(tool)) return true;
     signal?.throwIfAborted();
     const id = randomUUID();
     return new Promise<boolean>(resolve => {
       const timer = setTimeout(() => this.approve(id, false).catch(() => {}), 10 * 60 * 1000);
       const abort = () => this.approve(id, false).catch(() => {});
-      this.approvals.set(id, { id, chatId, tool, args, resolve, timer, cleanup: () => signal?.removeEventListener('abort', abort) });
+      this.approvals.set(id, { id, chatId, tool, args, reason, resolve, timer, cleanup: () => signal?.removeEventListener('abort', abort) });
       signal?.addEventListener('abort', abort, { once: true }); this.changed();
     });
   }
   async approve(id: string, allow: boolean, remember = false) {
     const approval = this.approvals.get(id);
     if (!approval) throw Object.assign(new Error('Approval expired.'), { status: 404 });
-    if (remember && allow && approval.tool !== 'browser_verification') {
+    if (remember && allow && !approval.reason && approval.tool !== 'browser_verification') {
       const permissions = this.record(approval.chatId).permissions;
       if (!permissions.includes(approval.tool)) permissions.push(approval.tool);
       await this.save();

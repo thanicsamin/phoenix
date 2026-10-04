@@ -1,0 +1,87 @@
+import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { once } from 'node:events';
+import { chromium } from 'patchright-core';
+import { ModelRuntime } from '@earendil-works/pi-coding-agent';
+import { Host } from '../src/host.ts';
+import { loadConfig } from '../src/config.ts';
+import { createAuth } from '../extensions/auth.ts';
+import { createWebServer } from '../extensions/web.ts';
+import chats from '../extensions/chats.ts';
+
+const directory = await mkdtemp(join(tmpdir(), 'phoenix-chat-ui-'));
+const host = new Host(await loadConfig('agent.json'), directory, join(directory, 'workspace')); await host.initialize();
+host.auth = await createAuth(directory, { password: 'chat-ui-fixture-password' });
+host.modelRuntime = await ModelRuntime.create({ authPath: join(directory, 'pi/auth.json'), modelsPath: join(directory, 'pi/models.json') });
+await host.modelRuntime.setRuntimeApiKey('opencode-go', 'fixture-model-key');
+host.ui = { root: fileURLToPath(new URL('../web/', import.meta.url)), version: 'chat-ui-fixture' };
+const tools = new Map();
+host.createSession = async id => {
+  chats({ on() {}, registerTool: tool => tools.set(id, tool) }, host, {}, id);
+  const record = host.record(id);
+  return { model: host.modelRuntime.getModel((record.model || host.config.model).provider, (record.model || host.config.model).id), thinkingLevel: record.thinking || 'off', modelRuntime: host.modelRuntime, messages: [],
+    subscribe: () => () => {}, bindExtensions: async () => {}, prompt: async function(text) { this.messages.push({ role: 'user', content: text }, { role: 'assistant', content: 'Fixture reply.' }); }, waitForIdle: async () => {}, abort: async () => {}, dispose() {} };
+};
+const older = await host.createChat('Older');
+const server = createWebServer(host); server.listen(0, '127.0.0.1'); await once(server, 'listening'); host.port = server.address().port;
+const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium', headless: true, chromiumSandbox: false });
+const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+const page = await context.newPage(); const errors = [];
+page.on('pageerror', error => errors.push(error.message));
+const order = () => page.locator('#chat-list .chat-link span').allTextContents();
+const waitTitle = title => page.locator('#chat-title').getByText(title, { exact: true }).waitFor({ state: 'visible' });
+try {
+  await page.goto(`http://127.0.0.1:${host.port}`); await page.getByLabel('Password', { exact: true }).fill('chat-ui-fixture-password'); await page.getByRole('button', { name: 'Sign in', exact: true }).click(); await page.locator('#app').waitFor({ state: 'visible' });
+  await page.getByRole('button', { name: 'New chat', exact: true }).click(); await waitTitle('New chat');
+  assert.equal(await page.locator('#chat-dialog').isVisible(), false); assert.deepEqual(await order(), ['Main chat', 'New chat', 'Older']);
+  assert.equal(await page.locator('#message').evaluate(element => element === document.activeElement), true);
+  await page.locator('#message').fill('Find a small desk planner'); await page.getByRole('button', { name: 'Send message', exact: true }).click(); await waitTitle('Find a small desk planner');
+  const first = host.records.at(-1); await tools.get(first.id).execute('name', { title: 'Desk planners', automatic: true }); await waitTitle('Desk planners');
+  await page.getByRole('button', { name: 'Chat details', exact: true }).click(); await page.locator('#chat-name').fill('My planner');
+  await page.locator('#chat-folder').selectOption('Shopping'); await page.locator('#chat-form').getByRole('button', { name: 'Save', exact: true }).click(); await waitTitle('My planner');
+  await tools.get(first.id).execute('late', { title: 'Do not overwrite', automatic: true }); assert.equal(first.title, 'My planner');
+  await page.getByLabel('Filter chats by folder', { exact: true }).selectOption('name:Shopping'); assert.deepEqual(await order(), ['My planner']);
+  await page.getByRole('button', { name: 'New chat', exact: true }).click(); await waitTitle('New chat'); const second = host.records.at(-1);
+  assert.equal(second.folder, 'Shopping'); assert.deepEqual(second.model, first.model); assert.deepEqual(await order(), ['New chat', 'My planner']);
+  await page.getByLabel('Search chats', { exact: true }).fill('planner'); assert.deepEqual(await order(), ['My planner']);
+  await page.getByLabel('Search chats', { exact: true }).fill('missing'); await page.getByText('No matching chats.', { exact: true }).waitFor({ state: 'visible' });
+  await page.getByLabel('Search chats', { exact: true }).fill('');
+  await page.getByRole('button', { name: 'Manage folders', exact: true }).click(); await page.locator('#folder-target').selectOption('Shopping'); await page.locator('#folder-name').fill('Supplies');
+  await page.locator('#folders-form').getByRole('button', { name: 'Save', exact: true }).click(); await page.locator('#folders-dialog').waitFor({ state: 'hidden' });
+  assert.equal(first.folder, 'Supplies'); assert.equal(second.folder, 'Supplies');
+  await page.getByLabel('Filter chats by folder', { exact: true }).selectOption('name:Supplies'); assert.deepEqual(await order(), ['New chat', 'My planner']);
+  await page.getByRole('button', { name: 'Manage folders', exact: true }).click(); await page.getByRole('button', { name: 'Remove folder', exact: true }).click(); await page.locator('#folders-dialog').waitFor({ state: 'hidden' });
+  assert.equal(first.folder, undefined); assert.equal(second.folder, undefined); assert.equal(host.records.length, 4);
+  await page.locator('.chat-link').getByText('Older', { exact: true }).click({ button: 'right' }); await page.locator('#chat-dialog').waitFor({ state: 'visible' });
+  assert.equal(await page.locator('#chat-name').inputValue(), 'Older'); await page.locator('#chat-name').fill('Renamed older'); await page.locator('#chat-form').getByRole('button', { name: 'Save', exact: true }).click(); await page.locator('#chat-dialog').waitFor({ state: 'hidden' });
+  assert.equal(older.title, 'Renamed older'); await waitTitle('New chat');
+  const box = await page.locator('.chat-link').filter({ hasText: 'Renamed older' }).boundingBox(); await page.mouse.move(box.x + 20, box.y + box.height / 2); await page.mouse.down(); await page.waitForTimeout(700); await page.mouse.up();
+  await page.locator('#chat-dialog').waitFor({ state: 'visible' }); assert.equal(await page.locator('#chat-name').inputValue(), 'Renamed older'); await page.getByRole('button', { name: 'Close chat details', exact: true }).click();
+  await page.locator('#chat-menu').click(); await page.keyboard.press('Control+k'); assert.equal(await page.locator('#chat-menu').getAttribute('aria-expanded'), 'true');
+  assert.equal(await page.getByLabel('Search chats', { exact: true }).evaluate(element => element === document.activeElement), true);
+  await page.keyboard.press('Control+Shift+o'); await page.waitForFunction(count => document.querySelectorAll('#chat-list .chat-link').length === count, 5); assert.equal(host.records.length, 5);
+  await page.getByRole('button', { name: 'Chat details', exact: true }).click(); await page.getByRole('button', { name: 'Memory', exact: true }).click(); await page.getByText('No memories saved yet.', { exact: true }).waitFor({ state: 'visible' }); await page.getByRole('button', { name: 'Close files', exact: true }).click();
+  await page.locator('#message').fill('Keep my draft'); await page.reload(); await page.locator('#app').waitFor({ state: 'visible' }); assert.equal(await page.locator('#message').inputValue(), 'Keep my draft');
+  const active = host.records.at(-1);
+  const observer = await page.context().newPage(); observer.on('pageerror', error => errors.push(error.message));
+  await observer.goto(`http://127.0.0.1:${host.port}/?chat=${active.id}`); await observer.locator('#app').waitFor({ state: 'visible' });
+  await page.getByRole('button', { name: 'Chat details', exact: true }).click(); await page.getByRole('button', { name: 'Delete', exact: true }).click();
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click(); assert.equal(host.record(active.id).title, 'New chat');
+  await page.getByRole('button', { name: 'Delete', exact: true }).click(); await page.getByRole('button', { name: 'Delete permanently', exact: true }).click(); await waitTitle('Main chat');
+  await observer.locator('#chat-title').getByText('Main chat', { exact: true }).waitFor({ state: 'visible' }); await observer.close();
+  assert.throws(() => host.record(active.id), /not found/); assert.equal(host.records.length, 4);
+  await page.getByRole('button', { name: 'Chat details', exact: true }).click(); assert.equal(await page.locator('#delete-chat').isVisible(), false); await page.getByRole('button', { name: 'Close chat details', exact: true }).click();
+  for (const width of [1280, 390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    if (width < 700) await page.locator('#chat-menu').click();
+    await page.getByRole('button', { name: 'Manage folders', exact: true }).click(); await page.getByRole('button', { name: 'Close folders', exact: true }).click();
+    if (width < 700) await page.locator('#chat-backdrop').click({ position: { x: width - 10, y: 400 } });
+    await page.getByRole('button', { name: 'Chat details', exact: true }).click(); assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true); await page.getByRole('button', { name: 'Close chat details', exact: true }).click();
+  }
+  await page.setViewportSize({ width: 1280, height: 900 }); await page.locator('#settings').click(); await page.locator('#logout').click(); await page.locator('#login').waitFor({ state: 'visible' });
+  assert.equal(await page.locator('#chat-name').inputValue(), ''); assert.equal(await page.locator('#folder-name').inputValue(), ''); assert.deepEqual(errors, []);
+  console.log('Chat UI passed: one-click creation/order/focus, agent titles and manual overrides, folder move/rename/remove, search, right click/long press, keyboard shortcuts, memory link, drafts, confirmed deletion and cancellation, deleted-chat recovery in another window, main protection, logout and 320/390/1280px layouts.');
+} finally { await browser.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await host.close(); await rm(directory, { recursive: true, force: true }); }

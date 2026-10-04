@@ -8,7 +8,7 @@ import { lifecycle } from '../src/host.ts';
 import { log } from '../src/log.ts';
 
 export async function runJob(host: Host, chatId: string, job: Job, now = Date.now()) {
-  if (job.running || host.closing || host.restarting) return;
+  if (job.running || host.closing || host.restarting || host.deleting.has(chatId)) return;
   // Keep due jobs on disk until a slot opens, rather than loading many sessions.
   if (host.records.flatMap(chat => chat.jobs).filter(item => item.running).length >= 2) return;
   job.running = true;
@@ -37,7 +37,7 @@ export async function runJob(host: Host, chatId: string, job: Job, now = Date.no
   await host.save();
 }
 export function tick(host: Host, now = Date.now()) {
-  for (const chat of host.records) for (const job of chat.jobs) {
+  for (const chat of host.records.filter(chat => !chat.deleted)) for (const job of chat.jobs) {
     if (job.enabled && job.nextRunAt && Date.parse(job.nextRunAt) <= now && !job.running) {
       runJob(host, chat.id, job, now).catch(error => log.error('job.persist_failed', { chatId: chat.id, jobId: job.id, error }));
     }

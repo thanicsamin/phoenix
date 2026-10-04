@@ -143,7 +143,8 @@ test('verification approval is one-time, clears on stop, and cannot be remembere
 
 test('CAPTCHA consent replaces a duplicate click approval, but never other website or send approvals', async () => {
   let hook; let consent = true; const approvals = [];
-  const host = { extensions: {}, getChat: async () => ({ source: 'web' }), browserPages: new Map([['main', () => 'https://example.com']]), browserControls: new Map([['main', { verificationAllowed: async () => consent }]]), requestApproval: async (_id, name) => { approvals.push(name); return true; } };
+  const record = { readRisk: 0 };
+  const host = { extensions: {}, record: () => record, save: async () => {}, getChat: async () => ({ source: 'web' }), browserPages: new Map([['main', () => 'https://example.com']]), browserControls: new Map([['main', { verificationAllowed: async () => consent }]]), requestApproval: async (_id, name) => { approvals.push(name); return true; } };
   permissions({ on: (_event, handler) => { hook = handler; } }, host, {});
   await hook({ toolName: 'browser', input: { action: 'click' } }); assert.deepEqual(approvals, []);
   await hook({ toolName: 'email_send', input: {} }); assert.deepEqual(approvals, ['email_send']);

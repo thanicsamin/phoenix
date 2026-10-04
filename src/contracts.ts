@@ -11,7 +11,7 @@ export interface DisplayMessage {
 }
 export interface Notice { id: string; type: 'reply' | 'error' }
 export interface ChatSummary {
-  id: string; title: string; archived: boolean; pinned: boolean;
+  id: string; title: string; archived: boolean; pinned: boolean; folder?: string;
   jobs: number; busy: boolean; notice?: Notice; approval: string | false;
 }
 export interface GenerationHistory { available: boolean; generations: { id: number; date: string; current: boolean }[] }
@@ -26,11 +26,11 @@ export interface ChatSnapshot {
   current: string; tool: string; error: string; messages: DisplayMessage[];
 }
 export interface ChatState extends ChatSnapshot {
-  chatId: string; title: string; archived: boolean; pinned: boolean; uiVersion?: string;
+  chatId: string; title: string; archived: boolean; pinned: boolean; folder?: string; folders?: string[]; uiVersion?: string;
   browser?: BrowserState; internet?: { available: boolean; enabled: boolean; paired: boolean; connected: boolean };
   models: { provider: string; id: string; name: string }[]; chats: ChatSummary[]; jobs: Job[];
   providers?: { id: string; name: string; configured: boolean; server?: { baseUrl: string; modelIds: string[]; contextWindow: number; vision: boolean; reasoning: boolean } }[];
-  approvals: { id: string; tool: string; args: unknown }[];
+  approvals: { id: string; tool: string; args: unknown; reason?: string }[];
 }
 
 export interface PlaidStatus {
