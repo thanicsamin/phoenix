@@ -147,3 +147,13 @@ test('explicit investment and liability products return financial data without f
   const liabilities = await f.plaid.read({ action: 'liabilities' }); assert.equal(liabilities.data.liabilities.credit[0].minimum_payment_amount, 20); assert.equal(liabilities.data.liabilities.credit[0].aprs[0].apr_percentage, 15);
   assert.ok(!JSON.stringify([holdings, liabilities]).includes('NEVER_RETURN'));
 });
+
+
+test('cancelled Link dialogs do not prevent later connections; pending state stays bounded', async t => {
+  const f = await fixture(t); await f.plaid.configure(credentials); const oldest = await f.plaid.link(); let newest;
+  for (let i = 0; i < 12; i++) newest = await f.plaid.link();
+  await assert.rejects(f.plaid.complete({ token: oldest.token, publicToken: 'public-private' }), /expired/);
+  await f.plaid.complete({ token: newest.token, publicToken: 'public-private' }); assert.equal(f.plaid.status().items.length, 1);
+  const bad = await fixture(t, { redirectUri: 'https://name:password@phoenix.example/' }); await bad.plaid.configure(credentials);
+  await assert.rejects(bad.plaid.link(undefined, 'https://phoenix.example'), /match the Phoenix/);
+});

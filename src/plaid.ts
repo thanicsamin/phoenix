@@ -130,13 +130,15 @@ export class Plaid {
   link(itemId?: string, origin?: string): Promise<PlaidLink> {
     return this.serial(async () => {
       const now = Date.now(); for (const [token, entry] of this.links) if (entry.expires <= now) this.links.delete(token);
-      if (this.links.size >= 10) throw fail('Too many pending bank connections. Finish one or wait for it to expire.', 429);
+      // Cancelled Link dialogs have no Item to disconnect. Keep only the ten
+      // newest flows so repeated cancellations cannot lock the owner out.
+      if (this.links.size >= 10) this.links.delete(this.links.keys().next().value!);
       if (!itemId && this.vault.items.length >= 20) throw fail('Disconnect a bank before adding another.');
       const body: Record<string, unknown> = { client_name: 'Phoenix', language: 'en', country_codes: this.options.countries, user: { client_user_id: this.vault.userId } };
       if (itemId) body.access_token = this.item(itemId).accessToken; else body.products = this.options.products;
       if (this.options.redirectUri) {
         const redirect = new URL(this.options.redirectUri);
-        if (!origin || redirect.origin !== origin || redirect.pathname !== '/' || redirect.search || redirect.hash || (redirect.protocol !== 'https:' && !(this.status().environment === 'sandbox' && redirect.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(redirect.hostname)))) throw fail('Plaid redirectUri must match the Phoenix origin and use its root path. Register it in your Plaid dashboard.');
+        if (redirect.username || redirect.password || !origin || redirect.origin !== origin || redirect.pathname !== '/' || redirect.search || redirect.hash || (redirect.protocol !== 'https:' && !(this.status().environment === 'sandbox' && redirect.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(redirect.hostname)))) throw fail('Plaid redirectUri must match the Phoenix origin and use its root path. Register it in your Plaid dashboard.');
         body.redirect_uri = redirect.href;
       }
       const result = await this.call('/link/token/create', body, z.object({ link_token: z.string(), expiration: z.iso.datetime() }));
