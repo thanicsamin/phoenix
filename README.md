@@ -310,9 +310,9 @@ reload restores its matching UI; ordinary restarts retain your UI generation.
 The agent can inspect its interface with `browser` at the URL returned by
 `reload_ui`, including mobile viewport sizes with `resize`. Local preview uses a
 short-lived internal sign-in, without exposing the owner's password or adding a
-public login bypass. UI publishing checks JavaScript syntax; the agent should
+public login bypass. UI publishing checks strict TypeScript and JavaScript syntax; the agent should
 inspect the result and roll back experiments that do not work. Local development
-without Nix serves the editable web folder directly: refresh to see edits.
+without Nix serves the editable web folder directly: compile TypeScript with `npm run build`, then refresh to see edits.
 
 The editable `/data/workspace/nix/flake.nix` and `nix/flake.lock` declare personal tools.
 To apply the flake from the workspace:
@@ -439,6 +439,59 @@ smoke-tests the container on native Linux runners for both architectures, with
 one CPU and the default 2 GiB memory cap. The connector has separate Windows/macOS jobs. Native
 Oracle deployment has also been verified on an A1 ARM host; the local preview
 runs on AMD64.
+
+## Finances (Plaid)
+
+Open **Settings → Finances** and save your Plaid client ID and secret. Start with
+**Sandbox** for test banks. Choose **Production** only with approved live API
+credentials from your [Plaid dashboard](https://dashboard.plaid.com/).
+**Connect bank** opens Plaid Link; bank passwords and MFA stay in Plaid/the bank.
+Use **Reconnect** to renew a login without creating another bank connection, or
+**Disconnect** to revoke Phoenix's access through Plaid and remove its saved token.
+
+Phoenix's `finance` tool reads accounts, balances and transactions. Ask in any
+owner browser chat, or schedule a task in that chat. Transactions default to
+30 days, with at most 100 per page; the agent can page through more. Incoming
+email and messaging channels cannot invoke this tool. There are no payment or
+transfer endpoints. Financial data read by the agent goes to your selected model
+provider and is saved in the chat history; connect only accounts you want it to see.
+
+No extra service, database, webhook or recurring polling is required. Link's web
+SDK loads on your computer only when connecting or reconnecting. Server replies
+are capped at 2 MiB. API secrets and bank access tokens are encrypted with a
+private local key under `/data/plaid/`, outside Files, setup exports and Nix
+snapshots. Back up both the vault and its key privately. Encryption does not
+isolate credentials from the privileged agent or someone with root access.
+
+You can instead set `PLAID_CLIENT_ID` and `PLAID_SECRET` (or their `_FILE`
+variants). Environment credentials take precedence over Settings. Declare the
+API environment and optional products in your setup:
+
+```json
+"plaid": {
+  "environment": "sandbox",
+  "countries": ["US"],
+  "products": ["transactions"]
+}
+```
+
+`investments` and `liabilities` enable the corresponding read tools when included
+in `products`. New products require bank consent; disconnect and relink an
+existing connection with the updated setup. Enable Account Select in your Plaid
+dashboard to let users choose individual accounts.
+
+For same-tab/mobile bank OAuth, set `redirectUri` to your Phoenix root URL, e.g.
+`https://your-host:24843/`, and register that exact URI in the Plaid dashboard.
+Phoenix resumes Link with the original redirect URI and its short-lived token.
+Production requires HTTPS. Desktop popup OAuth does not require a redirect URI.
+
+Plaid's [Trial plan](https://support.plaid.com/hc/en-us/articles/39994173227159-What-is-the-Plaid-Trial-plan)
+currently supports eligible individual US/Canada developers and up to ten
+lifetime-created bank connections. Deleting connections does not restore that
+quota. Reconnect an existing bank when its login expires. Production availability,
+institution support, product access and pricing depend on your Plaid account.
+Real bank linking requires your credentials and your manual sign-in; automated
+tests use local API/Link fixtures and do not connect to real accounts.
 
 ## Resource limits and logs
 

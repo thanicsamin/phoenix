@@ -49,3 +49,23 @@ assert.equal((await generations.history()).generations.find(item => item.current
 assert.match(await readFile(join(app, 'src/main.js'), 'utf8'), /Intentional startup failure/);
 assert.equal(await readFile(join(data, 'workspace/MEMORY.md'), 'utf8'), 'Keep my memory.');
 console.log('Supervisor recovery passed: startup failure restored the known working generation and kept the candidate source for repair.');
+
+// TypeScript publication checks types before switching and preserves both the
+// editable sources and their matching compiled browser files through rollback.
+const typedData = '/data/typescript-generation-check'; const typedApp = join(typedData, 'workspace/phoenix');
+await rm(typedData, { recursive: true, force: true });
+for (const folder of ['src', 'extensions', 'web']) await mkdir(join(typedApp, folder), { recursive: true });
+await writeFile(join(typedApp, 'package.json'), '{"type":"module"}');
+await writeFile(join(typedApp, 'tsconfig.json'), JSON.stringify({ compilerOptions: { strict: true, noEmit: true, target: 'ES2024', module: 'NodeNext', types: [] }, include: ['src/*.ts', 'web/*.ts'] }));
+const { symlink } = await import('node:fs/promises');
+await symlink('/app/node_modules', join(typedApp, 'node_modules'));
+await writeFile(join(typedApp, 'src/main.ts'), 'export const version: number = 1;');
+await writeFile(join(typedApp, 'web/app.ts'), 'const version: number = 1;');
+const typed = new Generations(typedData); await typed.initialize();
+await writeFile(join(typedApp, 'src/main.ts'), 'export const version: number = 2;');
+await writeFile(join(typedApp, 'web/app.ts'), 'const version: number = 2;'); await typed.apply();
+await writeFile(join(typedApp, 'src/main.ts'), "export const version: number = 'bad';");
+await assert.rejects(typed.apply(), /TypeScript check failed/); assert.equal((await typed.history()).generations.length, 2);
+await typed.switch(1); assert.match(await readFile(join(typedApp, 'src/main.ts'), 'utf8'), /number = 1/); assert.match(await readFile(join(typedApp, 'web/app.js'), 'utf8'), /version\s*= 1/);
+await typed.switch(2); assert.match(await readFile(join(typedApp, 'src/main.ts'), 'utf8'), /number = 2/); assert.match(await readFile(join(typedApp, 'web/app.js'), 'utf8'), /version\s*= 2/);
+console.log('TypeScript Nix generations passed: type-error rejection before switching, matching browser assets, rollback and forward restore.');

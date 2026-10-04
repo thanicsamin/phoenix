@@ -3,6 +3,7 @@ import type { Config, Cleanup, QueuedMessage, SteeringMessage, ChatRecord, Nativ
 import type { AgentSession, ModelRuntime, ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import type { ImageContent } from '@earendil-works/pi-ai';
 import type { BrowserControl } from './browser-control.ts';
+import type { Plaid } from './plaid.ts';
 import type { Internet } from '../extensions/internet.ts';
 import type { createAuth } from '../extensions/auth.ts';
 import type { Interface } from './interface.ts';
@@ -170,7 +171,7 @@ export class Host extends EventEmitter {
   cleanups: Cleanup[] = []; sessionExtensions: NativeExtension[] = []; startedExtensions = new Set<string>();
   writeQueue: Promise<void>; files!: Files; workspaceFiles!: Workspace;
   createSession!: (id: string) => Promise<AgentSession>; modelRuntime!: ModelRuntime;
-  browserControls?: Map<string, BrowserControl>; internet?: Internet; auth!: Awaited<ReturnType<typeof createAuth>>;
+  browserControls?: Map<string, BrowserControl>; internet?: Internet; plaid?: Plaid; auth!: Awaited<ReturnType<typeof createAuth>>;
   memoryQueue: Promise<unknown> = Promise.resolve(); display?: Promise<string>;
   browserPages?: Map<string, () => string | undefined>; browserClosers?: Map<string, Cleanup>;
   ui!: Interface; generations!: Generations; restarting = false; publicUrl?: string;

@@ -18,6 +18,7 @@
   <script src="/browser.js" defer></script>
   <script src="/notifications.js" defer></script>
   <script src="/previews.js" defer></script>
+  <script src="/plaid.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
@@ -93,6 +94,19 @@
     <button id="notifications" type="button" aria-pressed="false">Enable notifications</button><p id="notification-status" class="muted" role="status"></p>
     <details><summary>System prompt</summary><form id="prompt-form"><label class="sr-only" for="system-prompt">System prompt</label><textarea id="system-prompt" rows="9" maxlength="200000"></textarea><button type="submit" class="primary">Save prompt</button><p id="prompt-status" class="muted" role="status"></p></form></details>
     <details id="internet-settings" hidden><summary>Internet</summary><p id="internet-status" class="muted" role="status"></p><div class="setup-actions"><button id="internet-toggle">Use my internet</button><button id="internet-forget" hidden>Disconnect computer</button></div><p id="internet-error" class="error" role="alert"></p></details>
+    <details id="plaid-settings"><summary>Finances</summary>
+      <p id="plaid-status" class="muted" role="status"></p>
+      <form id="plaid-form">
+        <label for="plaid-environment">Plaid environment</label><select id="plaid-environment"><option value="sandbox">Sandbox · test banks</option><option value="production">Production · real banks</option></select>
+        <label for="plaid-client-id">Client ID</label><input id="plaid-client-id" required autocomplete="off" maxlength="100">
+        <label for="plaid-secret">Secret</label><input id="plaid-secret" type="password" required autocomplete="off" minlength="8" maxlength="200">
+        <button type="submit">Save Plaid credentials</button>
+      </form>
+      <div id="plaid-items"></div>
+      <button id="plaid-connect" type="button" hidden>Connect bank</button><button id="plaid-retry" type="button" hidden>Retry saving connection</button>
+      <p class="muted">Read-only. Data Phoenix reads is sent to your selected model. Bank sign-in stays with Plaid and your bank.</p>
+      <p id="plaid-error" class="error" role="alert"></p>
+    </details>
     <details><summary>Extensions</summary><div id="extensions"></div></details>
     <details><summary>Setup</summary><div class="setup-actions"><a class="button" href="/api/setup" download="agent.json">Export setup</a><button id="import-setup">Import setup</button></div><input id="setup-file" type="file" accept=".json,application/json" hidden></details>
     <div class="account-actions"><button id="logout">Sign out</button></div>

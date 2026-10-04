@@ -1,4 +1,4 @@
-import type { ChatState, Attachment, WorkspaceFile, WorkspaceEntry, GenerationHistory, ChatSummary } from '../src/contracts.ts';
+import type { ChatState, Attachment, WorkspaceFile, WorkspaceEntry, GenerationHistory, ChatSummary, PlaidStatus, PlaidLink } from '../src/contracts.ts';
 import type MarkdownIt from 'markdown-it';
 import type * as KaTeX from 'katex';
 import type { DOMPurify } from 'dompurify';
@@ -11,6 +11,8 @@ type APIResult<P extends string> =
   P extends `/api/workspace/file${string}` ? WorkspaceFile :
   P extends `/api/workspace?${string}` ? { path: string; entries: WorkspaceEntry[] } :
   P extends '/api/generations' | '/api/ui/generations' ? GenerationHistory :
+  P extends '/api/plaid/status' | '/api/plaid/configure' | '/api/plaid/complete' | '/api/plaid/disconnect' ? PlaidStatus :
+  P extends '/api/plaid/link' ? PlaidLink :
   P extends '/api/internet/pair' ? { client: string } : Record<string, never>;
 type API = <P extends string>(path: P, body?: unknown) => Promise<APIResult<P>>;
 interface DraftFile extends Attachment { queued?: boolean }
@@ -150,6 +152,8 @@ declare global {
     renderMarkdown: (text: string) => DocumentFragment | HTMLElement;
     previewPDF: (image: HTMLImageElement, url: string) => void;
     resetPreviews: (clear?: boolean) => void;
+    initPlaid: (options: { api: API }) => { refresh: () => Promise<void>; resume: () => Promise<void>; reset: () => void };
+    Plaid?: { create: (options: { token: string; receivedRedirectUri?: string; onSuccess: (publicToken: string | null, metadata: { institution?: { name?: string } | null }) => void; onExit: (error: { error_code?: string } | null) => void }) => { open: () => void; destroy: () => void } };
     initBrowserControl: (options: { api: API; chat: () => string; csrf: () => string; refresh: () => Promise<void> }) => void;
     openBrowser: (take?: boolean) => void;
     initNotifications: (options: { selectChat: (id: string) => void }) => NotificationController;

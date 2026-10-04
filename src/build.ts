@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 const run = promisify(execFile);
 export async function checkProject(root: string, webOnly = false) {
   try {
-    await run(process.execPath, ['--max-old-space-size=1024', join(root, 'node_modules/typescript/bin/tsc'), '--project', join(root, webOnly ? 'tsconfig.web.json' : 'tsconfig.json'), '--pretty', 'false'], { maxBuffer: 2 * 1024 * 1024 });
+    await run(process.execPath, [webOnly ? '--max-old-space-size=256' : '--max-old-space-size=1024', join(root, 'node_modules/typescript/bin/tsc'), '--project', join(root, webOnly ? 'tsconfig.web.json' : 'tsconfig.json'), '--pretty', 'false'], { maxBuffer: 2 * 1024 * 1024 });
   } catch (error) {
     const output = error && typeof error === 'object' && 'stdout' in error ? String(error.stdout) || ('stderr' in error ? String(error.stderr) : String(error)) : String(error);
     throw Object.assign(Error(`TypeScript check failed:\n${output.slice(0, 32000)}`), { status: 400 });

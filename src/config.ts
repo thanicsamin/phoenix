@@ -25,6 +25,13 @@ export const configSchema = z.strictObject({
   extensions: z.strictObject({
     auth: z.strictObject({}).default({}),
     web: z.strictObject({ port: z.number().int().min(0).max(65535).default(8080), url: publicWebUrl.optional() }).default({ port: 8080 }),
+    plaid: z.strictObject({
+      clientIdEnv: envName.default('PLAID_CLIENT_ID'), secretEnv: envName.default('PLAID_SECRET'),
+      environment: z.enum(['sandbox', 'production']).default('sandbox'),
+      countries: z.array(z.enum(['US', 'CA'])).min(1).max(2).default(['US']),
+      products: z.array(z.enum(['transactions', 'investments', 'liabilities'])).min(1).max(3).default(['transactions']),
+      redirectUri: z.url().optional(),
+    }).prefault({}),
     browser: z.strictObject({ headless: z.boolean().optional() }).optional(),
     internet: z.strictObject({}).default({}),
     memory: z.strictObject({}).default({}),

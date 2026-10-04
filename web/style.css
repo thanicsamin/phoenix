@@ -271,3 +271,6 @@ summary { cursor: pointer; color: var(--muted); padding: 8px 0; }
   --shadow: #00000040; --focus-shadow: #9fb99620;
 }
 #pin-chat, #archive-chat, #archived-chats { border: 0; color: var(--muted); text-align: left; }
+.plaid-item { display:flex; align-items:center; gap:8px; margin:10px 0; flex-wrap:wrap; }
+.plaid-item span { flex:1; min-width:100px; overflow-wrap:anywhere; }
+#plaid-form button { margin-top:12px; }

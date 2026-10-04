@@ -96,13 +96,14 @@ async function refresh() {
   const state = await api(`/api/state?chat=${encodeURIComponent(requestedChat)}`);
   if (state && requestedChat === chatId) render(state);
 }
-function showLogin() { cancelQueueEdit(); notifications.reset(); window.resetPreviews(true); signedIn = false; pendingUI = undefined; drafts.clear(); draftMessages.clear(); $('#message').value = ''; try { sessionStorage.removeItem('phoenix-drafts'); } catch { /* Storage may be disabled. */ } window.stopVoice?.(); document.querySelectorAll<HTMLDialogElement>('dialog[open]').forEach(dialog => dialog.close()); closeChats(); signedIn = false; clearTimeout(reconnect); socket?.close(); $('#login').hidden = false; $('#app').hidden = true; }
-function showApp() { signedIn = true; connectSocket(); revision = -1; $('#login').hidden = true; $('#app').hidden = false; renderDrafts(); sizeComposer(); refresh().catch(error => { $('#agent-error').textContent = error.message; }); poll(); }
+function showLogin() { finances.reset(); cancelQueueEdit(); notifications.reset(); window.resetPreviews(true); signedIn = false; pendingUI = undefined; drafts.clear(); draftMessages.clear(); $('#message').value = ''; try { sessionStorage.removeItem('phoenix-drafts'); } catch { /* Storage may be disabled. */ } window.stopVoice?.(); document.querySelectorAll<HTMLDialogElement>('dialog[open]').forEach(dialog => dialog.close()); closeChats(); signedIn = false; clearTimeout(reconnect); socket?.close(); $('#login').hidden = false; $('#app').hidden = true; }
+function showApp() { signedIn = true; finances.resume().catch(() => {}); connectSocket(); revision = -1; $('#login').hidden = true; $('#app').hidden = false; renderDrafts(); sizeComposer(); refresh().catch(error => { $('#agent-error').textContent = error.message; }); poll(); }
 let promptBaseline = '';
 async function openSettings() {
   closeChats();
   $('#settings-model').textContent = latest ? `${latest.model.provider === 'opencode-go' ? 'OpenCode Go' : 'OpenCode Zen'} · ${latest.model.id}` : '';
   $('#settings-dialog').showModal();
+  await finances.refresh();
   try { $('#system-prompt').value = promptBaseline = (await api('/api/workspace/file?path=AGENTS.md')).text || ''; $('#prompt-status').textContent = ''; }
   catch (caught) { const error = caught instanceof Error ? caught : new Error(String(caught)); $('#prompt-status').textContent = error.message; }
 }
@@ -353,6 +354,7 @@ $('#archive-chat').addEventListener('click', async () => {
     showingArchived = false; revision = -1; closeChats(); await refresh();
   } catch (caught) { const error = caught instanceof Error ? caught : new Error(String(caught)); $('#agent-error').textContent = error.message; }
 });
+const finances = window.initPlaid({ api });
 window.initBrowserControl({ api, chat: () => chatId, csrf: () => csrf, refresh });
 
 function renderJobs() {

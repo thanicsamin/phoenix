@@ -21,6 +21,7 @@ import { attachBrowserSocket } from './browser-socket.ts';
 
 const files: Record<string, [URL, string]> = {
   '/': [new URL('../web/index.html', import.meta.url), 'text/html; charset=utf-8'],
+  '/plaid.js': [new URL('../web/plaid.js', import.meta.url), 'text/javascript; charset=utf-8'],
   '/app.js': [new URL('../web/app.js', import.meta.url), 'text/javascript; charset=utf-8'],
   '/voice.js': [new URL('../web/voice.js', import.meta.url), 'text/javascript; charset=utf-8'],
   '/theme.js': [new URL('../web/theme.js', import.meta.url), 'text/javascript; charset=utf-8'],
@@ -105,7 +106,11 @@ export function createWebServer(host: Host, logger = log) {
     try {
       const authority = request.headers.host;
       if (!allowedHost(authority)) return send(403, { error: 'Unrecognized host.' });
-      response.setHeader('Content-Security-Policy', `default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' ws://${authority} wss://${authority}; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`);
+      const plaidNonce = host.plaid ? randomUUID().replaceAll('-', '') : '';
+      const plaidScript = plaidNonce ? ` 'nonce-${plaidNonce}' https://cdn.plaid.com/link/v2/stable/link-initialize.js` : '';
+      const plaidStyle = plaidNonce ? ` 'nonce-${plaidNonce}'` : '';
+      const plaidNetwork = plaidNonce ? ' https://sandbox.plaid.com https://production.plaid.com' : '';
+      response.setHeader('Content-Security-Policy', `default-src 'self'; script-src 'self' 'wasm-unsafe-eval'${plaidScript}; style-src 'self'${plaidStyle}; style-src-attr 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' ws://${authority} wss://${authority}${plaidNetwork}; frame-src ${plaidNonce ? 'https://cdn.plaid.com' : "'none'"}; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`);
       const path = new URL(request.url || '/', `http://${authority}`).pathname;
       if (request.method === 'GET' && path === '/health') return send(200, { ok: true });
       if (request.method === 'GET' && files[path]) {
@@ -113,6 +118,7 @@ export function createWebServer(host: Host, logger = log) {
         const webFile = !path.startsWith('/vendor/') && host.ui ? join(host.ui.root, path === '/' ? 'index.html' : path.slice(1)) : file;
         if (!path.startsWith('/vendor/') && host.ui && !(await realpath(webFile)).startsWith(`${await realpath(host.ui.root)}/`)) return send(404, { error: 'File not found.' });
         let content = await readFile(webFile);
+        if (path === '/' && plaidNonce) content = Buffer.from(content.toString('utf8').replace(/<\/head>/i, `<meta name="plaid-nonce" content="${plaidNonce}"></head>`));
         if (path === '/' && host.ui?.version) content = Buffer.from(content.toString('utf8').replace(/<\/head>/i, `<meta name="ui-version" content="${host.ui.version}"></head>`));
         response.writeHead(200, { 'Content-Type': contentType });
         return response.end(content);
@@ -135,6 +141,20 @@ export function createWebServer(host: Host, logger = log) {
         if (request.headers['x-csrf-token'] !== auth.csrf) return send(403, { error: 'Invalid session token.' });
       } else if (!auth) return send(401, { error: 'Sign in to continue.' });
       const query = new URL(request.url || '/', `http://${authority}`).searchParams;
+      if (path.startsWith('/api/plaid/')) {
+        if (auth.preview) return send(403, { error: 'Sign in as the owner to manage finances.' });
+        if (!host.plaid) return send(409, { error: 'Plaid is not enabled in this setup.' });
+        if (request.method === 'GET' && path === '/api/plaid/status') return send(200, host.plaid.status());
+        if (request.method === 'POST') {
+          if (path === '/api/plaid/configure') { const result = await host.plaid.configure(await readJson(request, 2000)); host.changed(); return send(200, result); }
+          if (path === '/api/plaid/complete') { const result = await host.plaid.complete(await readJson(request, 2000)); host.changed(); return send(200, result); }
+          const body = z.strictObject({ itemId: z.string().min(1).max(100).optional() }).safeParse(await readJson(request, 2000));
+          if (!body.success) return send(400, { error: 'Invalid bank connection ID.' });
+          if (path === '/api/plaid/link') return send(200, await host.plaid.link(body.data.itemId, request.headers.origin));
+          if (path === '/api/plaid/disconnect' && body.data.itemId) { const result = await host.plaid.disconnect(body.data.itemId); host.changed(); return send(200, result); }
+        }
+        return send(404, { error: 'Unknown finance endpoint.' });
+      }
       if (request.method === 'POST' && path === '/api/browser/release') {
         if (auth.preview) return send(403, { error: 'Sign in as the owner to control the browser.' });
         const { chatId = 'main' } = await readBody(request); host.record(chatId);

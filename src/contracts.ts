@@ -31,3 +31,9 @@ export interface ChatState extends ChatSnapshot {
   models: { provider: string; id: string; name: string }[]; chats: ChatSummary[]; jobs: Job[];
   approvals: { id: string; tool: string; args: unknown }[];
 }
+
+export interface PlaidStatus {
+  configured: boolean; clientId?: string; environment: 'sandbox' | 'production'; managedByEnvironment: boolean;
+  products: string[]; items: { id: string; name: string; connectedAt: string }[];
+}
+export interface PlaidLink { token: string; expiresAt: string; itemId?: string }
