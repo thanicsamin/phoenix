@@ -35,10 +35,16 @@ export class BrowserControl {
       await this.watch(page, socket);
     } finally { this.claiming = false; }
   }
-  async view(socket) {
+  async view(socket, width, height) {
     if (this.closed || this.releasing || this.socket && this.socket !== socket) throw Error('Browser is already open in another window.');
     this.socket = socket; clearTimeout(this.idle); this.host.changed();
-    try { await this.watch(await this.browser.ensure(), socket); if (!this.controlled) this.browser.idle(); }
+    try {
+      const page = await this.browser.ensure();
+      // A paused owner reconnecting from a phone needs a usable mobile page.
+      // Watching an active agent must preserve its viewport.
+      if (this.controlled && width && height) await page.setViewportSize({ width, height });
+      await this.watch(page, socket); if (!this.controlled) this.browser.idle();
+    }
     catch (error) { await this.disconnect(socket); throw error; }
   }
   async watch(page, socket = this.socket) {

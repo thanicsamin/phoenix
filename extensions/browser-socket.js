@@ -36,7 +36,7 @@ export function attachBrowserSocket(server, host, tokenFrom, allowedHost) {
             control = host.browserControls?.get(data.chatId);
             if (!control) throw Error();
             width = data.width; height = data.height;
-            prepared = control.view(connection); await prepared;
+            prepared = control.view(connection, width, height); await prepared;
           } else if (data.type === 'take') {
             if (taking || control.controlled) throw Error();
             taking = true;

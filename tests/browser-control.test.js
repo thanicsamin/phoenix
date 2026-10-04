@@ -56,12 +56,14 @@ test('takeover aborts active work before opening the page and resumes only on ex
 test('viewing preserves active work and viewport; takeover and handback keep the live viewer connected', async () => {
   const { host, control, socket, page, cleared } = fixture(); let aborted = 0;
   host.loaded.set('main', { pending: 1, session: { abort: async () => aborted++, waitForIdle: async () => {} } });
-  await control.view(socket);
+  await control.view(socket, 320, 700);
   assert.equal(aborted, 0); assert.equal(control.controlled, false);
   assert.deepEqual(page.viewportSize(), { width: 800, height: 600 });
   assert.throws(() => control.input(socket, { type: 'text', text: 'ignored' }), /control has ended/);
   await control.claim(socket, 400, 700); assert.equal(aborted, 1);
   assert.deepEqual(page.viewportSize(), { width: 400, height: 700 });
+  await control.disconnect(socket); await control.view(socket, 320, 650);
+  assert.deepEqual(page.viewportSize(), { width: 320, height: 650 }); assert.equal(aborted, 1);
   host.loaded.get('main').pending = 0; host.loaded.get('main').submit = async () => {};
   await control.release(); assert.equal(cleared(), 1);
   assert.equal(control.controlled, false); assert.equal(control.socket, socket); assert.ok(control.cdp);

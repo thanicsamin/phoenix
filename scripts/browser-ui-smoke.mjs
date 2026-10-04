@@ -65,6 +65,8 @@ try {
     await page.setViewportSize({ width, height: 844 });
     await page.getByRole('button', { name: 'Resume browser', exact: true }).click();
     await page.getByText('You’re in control', { exact: true }).waitFor({ state: 'visible', timeout: 30000 });
+    assert.equal(await page.locator('#browser-screen').evaluate(canvas => canvas.width),
+      await page.locator('#browser-view').evaluate(view => Math.max(320, Math.min(1280, Math.floor(view.clientWidth)))), 'Owner reconnect did not resize the website');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `Overflow at ${width}px`);
     for (const selector of ['#browser-keyboard', '#return-browser', '#browser-url', '#browser-screen']) {
       const bounds = await page.locator(selector).boundingBox(); assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= width + 1, `${selector} extends past ${width}px`);
