@@ -49,7 +49,7 @@ jobs:
       - run: >-
           docker run --rm --read-only --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER
           --security-opt no-new-privileges:true --shm-size 256m
-          --memory 1g --memory-swap 1g --cpus 1
+          --memory 2g --memory-swap 2g --cpus 1
           --tmpfs /tmp:rw,nosuid,nodev,size=64m
           --mount type=bind,src=${{ github.workspace }}/scripts,target=/app/scripts,readonly
           phoenix-agent:test /bin/node scripts/container-smoke.mjs

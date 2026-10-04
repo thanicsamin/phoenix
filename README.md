@@ -396,7 +396,7 @@ detected at startup; override it only if your server uses a separate outbound IP
 
 The pinned base image and Nix flake support both AMD64 and ARM64. CI builds and
 smoke-tests the container on native Linux runners for both architectures, with
-one CPU and 1 GiB smoke-test caps; the default deployment budget is 2 GiB. The connector has separate Windows/macOS jobs. Native
+one CPU and the default 2 GiB memory cap. The connector has separate Windows/macOS jobs. Native
 Oracle deployment has also been verified on an A1 ARM host; the local preview
 runs on AMD64.
 
