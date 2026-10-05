@@ -62,3 +62,26 @@ test('changes during a slow state read are delivered; logout revokes the in-flig
   host.auth.logout(login.token); release();
   assert.equal((await closing)[0], 1008); assert.equal(delivered.some(state => state.revision === 2), false);
 });
+
+test('each broadcast reads state once per chat across windows without sharing histories between chats', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'phoenix-socket-shared-'));
+  const host = new EventEmitter(); host.auth = await createAuth(directory, { password: 'socket-shared-password' }); host.revision = 0;
+  host.record = id => { if (!['main', 'side'].includes(id)) throw Error('Invalid chat'); }; const reads = [];
+  host.state = async chatId => { reads.push(chatId); return { chatId, revision: host.revision, messages: [{ text: `History for ${chatId}` }] }; };
+  const server = createWebServer(host); server.listen(0, '127.0.0.1'); await once(server, 'listening'); host.port = server.address().port;
+  const sockets = [];
+  t.after(async () => { for (const socket of sockets) socket.terminate(); server.closeWebSockets(); server.closeAllConnections(); host.auth.close(); await new Promise(resolve => server.close(resolve)); await rm(directory, { recursive: true, force: true }); });
+  const origin = `http://127.0.0.1:${host.port}`; const login = await host.auth.login('socket-shared-password');
+  for (let index = 0; index < 4; index++) {
+    const socket = new WebSocket(origin.replace('http:', 'ws:') + '/api/socket', { headers: { Origin: origin, Cookie: `phoenix=${login.token}` } }); sockets.push(socket);
+    await once(socket, 'message', { signal: AbortSignal.timeout(2000) });
+  }
+  reads.length = 0; let pending = sockets.map(socket => once(socket, 'message', { signal: AbortSignal.timeout(2000) }));
+  host.revision++; host.emit('change'); const updates = await Promise.all(pending);
+  assert.deepEqual(reads, ['main']); assert.ok(updates.every(([data]) => JSON.parse(data).revision === 1));
+  const switched = once(sockets[3], 'message', { signal: AbortSignal.timeout(2000) }); sockets[3].send(JSON.stringify({ chatId: 'side' }));
+  const side = JSON.parse((await switched)[0]); assert.equal(side.chatId, 'side'); assert.equal(side.messages[0].text, 'History for side');
+  reads.length = 0; pending = sockets.map(socket => once(socket, 'message', { signal: AbortSignal.timeout(2000) }));
+  host.revision++; host.emit('change'); const split = await Promise.all(pending); assert.deepEqual(reads.sort(), ['main', 'side']);
+  assert.deepEqual(split.map(([data]) => JSON.parse(data).chatId), ['main', 'main', 'main', 'side']);
+});

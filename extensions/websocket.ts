@@ -1,6 +1,7 @@
 import { PhoenixSocket } from '../src/socket.ts';
 import type { WebServer, TokenFrom, AllowedHost } from '../src/socket.ts';
 import type { Host } from '../src/host.ts';
+import type { ChatState } from '../src/contracts.ts';
 import { WebSocketServer, WebSocket } from 'ws';
 
 // The socket only delivers state. Mutations keep the HTTP API's CSRF checks.
@@ -8,7 +9,7 @@ export function attachWebSocket(server: WebServer, host: Host, tokenFrom: TokenF
   const sockets = new WebSocketServer({ WebSocket: PhoenixSocket, noServer: true, maxPayload: 4096, perMessageDeflate: false });
   let timer: NodeJS.Timeout | undefined;
   let closed = false;
-  async function publish(socket: PhoenixSocket) {
+  async function publish(socket: PhoenixSocket, snapshots?: Map<string, Promise<ChatState>>) {
     if (closed || socket.readyState !== WebSocket.OPEN) return;
     if (socket.sending) { socket.dirty = true; return; }
     if (!host.auth.get(socket.token)) return socket.close(1008, 'Session expired');
@@ -16,7 +17,9 @@ export function attachWebSocket(server: WebServer, host: Host, tokenFrom: TokenF
     socket.sending = true; socket.dirty = false;
     const chatId = socket.chatId;
     try {
-      const state = await host.state(chatId);
+      let snapshot = snapshots?.get(chatId);
+      if (!snapshot) { snapshot = host.state(chatId); snapshots?.set(chatId, snapshot); }
+      const state = await snapshot;
       if (!host.auth.get(socket.token)) return socket.close(1008, 'Session expired');
       if (chatId === socket.chatId && socket.readyState === WebSocket.OPEN) {
         // Don't resend the model catalog and full history for every streamed token.
@@ -33,7 +36,12 @@ export function attachWebSocket(server: WebServer, host: Host, tokenFrom: TokenF
   }
   const changed = () => {
     if (timer || closed) return;
-    timer = setTimeout(() => { timer = undefined; for (const socket of sockets.clients) publish(socket); }, 60);
+    timer = setTimeout(() => {
+      timer = undefined;
+      // Share this broadcast's work; never retain a stale state between updates.
+      const snapshots = new Map<string, Promise<ChatState>>();
+      for (const socket of sockets.clients) publish(socket, snapshots);
+    }, 60);
   };
   host.on?.('change', changed);
   server.on('upgrade', (request, socket, head) => {

@@ -33,6 +33,22 @@ test('queue bounds and validation prevent unbounded work', async () => {
   host.pending = 0; host.closing = true;
   await assert.rejects(host.submit('hi'), /shutting down/);
 });
+test('chat snapshots visit only the visible tail and keep attachments, queue edits and fresh history in order', () => {
+  const chat = new Host({ name: 'Fixture', model: { provider: 'opencode', id: 'big-pickle' } }, '/tmp', '/tmp');
+  const history = Array.from({ length: 30000 }, () => ({ role: 'toolResult', toolName: 'read', content: 'Old tool output' }));
+  for (let index = 0; index < 120; index++) history.push({ role: index % 2 ? 'assistant' : 'user', content: `Visible ${index}` });
+  const attachment = { id: 'attachment-id', chatId: 'main', name: 'answer.png', size: 8, mime: 'image/png' };
+  history.push({ role: 'toolResult', toolName: 'attach_file', details: { attachment } }, { role: 'toolResult', toolName: 'attach_file', details: {} });
+  let visited = 0;
+  chat.session = { messages: new Proxy(history, { get(target, key) { if (/^\d+$/.test(String(key))) visited++; return Reflect.get(target, key); } }), modelRuntime: { hasConfiguredAuth: () => true } };
+  chat.queued.push({ id: 'queued-id', version: 1, source: 'web', message: 'Edited queued text' });
+  chat.steering.push({ source: 'web', message: 'Steering text', steered: true });
+  const state = chat.state(); assert.ok(visited <= 105, `Scanned ${visited} entries`);
+  assert.equal(state.messages.length, 102); assert.equal(state.messages[0].text, 'Visible 21'); assert.equal(state.messages[98].text, 'Visible 119');
+  assert.deepEqual(state.messages[99].attachments, [attachment]); assert.equal(state.messages[100].queueId, 'queued-id'); assert.equal(state.messages[100].version, 1); assert.equal(state.messages[101].steered, true);
+  history.push({ role: 'assistant', content: 'Fresh reply' }); assert.equal(chat.state().messages[99].text, 'Fresh reply');
+  history.splice(0, history.length, { role: 'user', content: 'After compaction' }); assert.equal(chat.state().messages[0].text, 'After compaction');
+});
 
 test('queued edits change the actual delivered text and images, and reject stale or already-started edits', async () => {
   const chat = new Host({}, '/tmp', '/tmp'); let release; const calls = [];

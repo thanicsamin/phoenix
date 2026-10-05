@@ -160,6 +160,12 @@ when two scheduled jobs are already running. `/data`, `/nix/store` and
 
 Live updates use an authenticated WebSocket with polling as a reconnect
 fallback. The UI has no framework; its TypeScript compiles to browser JavaScript during the image build or UI publication.
+Snapshots scan only the most recent 100 visible messages; windows watching the
+same chat share each broadcast's state read. Unchanged scripts, styles and preview
+libraries revalidate in the browser cache. Content hashes detect edits and rollback;
+HTML, API responses and private files keep `no-store`. Assets are not held in RAM
+on the VPS. Run `node scripts/performance-smoke.ts` for a synthetic benchmark of
+snapshot time, multiple-window state reads and repeated asset downloads.
 
 Chat messages render Markdown, including tables and code blocks, and LaTeX math
 with `$…$`, `$$…$$`, `\(…\)` and `\[…\]`. Rendering and fonts are served locally.

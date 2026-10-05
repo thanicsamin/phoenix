@@ -2,12 +2,35 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { request } from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createAuth } from '../extensions/auth.ts';
 import web, { createWebServer } from '../extensions/web.ts';
 import { createLogger } from '../src/log.ts';
+
+test('static assets revalidate on the device; edits and rollback refresh while HTML and API data remain uncached', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'phoenix-assets-')); const root = join(directory, 'web'); await mkdir(root);
+  await writeFile(join(root, 'app.js'), 'const revision = 1;'); await writeFile(join(root, 'index.html'), '<html><head></head><body></body></html>');
+  const host = { auth: await createAuth(directory, { password: 'asset-fixture-password' }), ui: { root, version: 'fixture' }, plaid: {}, revision: 1, state: async () => ({ private: 'synthetic-owner-content' }) };
+  const server = createWebServer(host); server.listen(0, '127.0.0.1'); await once(server, 'listening'); host.port = server.address().port;
+  t.after(async () => { server.closeWebSockets(); server.closeAllConnections(); host.auth.close(); await new Promise(resolve => server.close(resolve)); await rm(directory, { recursive: true, force: true }); });
+  const base = `http://127.0.0.1:${host.port}`;
+  const first = await fetch(base + '/app.js'); const etag = first.headers.get('etag'); assert.ok(etag); assert.equal(first.headers.get('cache-control'), 'private, no-cache'); assert.equal(await first.text(), 'const revision = 1;');
+  for (const match of [etag, `W/${etag}`, `"other", ${etag}`, '*']) {
+    const response = await fetch(base + '/app.js', { headers: { 'If-None-Match': match } }); assert.equal(response.status, 304); assert.equal(await response.text(), ''); assert.equal(response.headers.get('etag'), etag);
+  }
+  // Same byte length and UI version: the content itself determines freshness.
+  await writeFile(join(root, 'app.js'), 'const revision = 2;');
+  const changed = await fetch(base + '/app.js', { headers: { 'If-None-Match': etag } }); assert.equal(changed.status, 200); assert.notEqual(changed.headers.get('etag'), etag); assert.equal(await changed.text(), 'const revision = 2;');
+  await writeFile(join(root, 'app.js'), 'const revision = 1;'); assert.equal((await fetch(base + '/app.js', { headers: { 'If-None-Match': etag } })).status, 304);
+  const html = await fetch(base, { headers: { 'If-None-Match': '*' } }); assert.equal(html.status, 200); assert.equal(html.headers.get('cache-control'), 'no-store'); assert.equal(html.headers.get('etag'), null);
+  const nonce = await html.text(); assert.match(nonce, /plaid-nonce/); assert.notEqual(await (await fetch(base)).text(), nonce);
+  assert.equal((await fetch(base + '/api/state', { headers: { 'If-None-Match': '*' } })).status, 401);
+  const login = await host.auth.login('asset-fixture-password');
+  const state = await fetch(base + '/api/state', { headers: { Cookie: `phoenix=${login.token}`, 'If-None-Match': '*' } }); assert.equal(state.status, 200); assert.equal(state.headers.get('cache-control'), 'no-store'); assert.equal(state.headers.get('etag'), null);
+  assert.deepEqual(await state.json(), { private: 'synthetic-owner-content' });
+});
 
 test('direct HTTPS origin preserves login, secure cookies and host checks on a custom port', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'phoenix-direct-'));

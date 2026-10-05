@@ -140,15 +140,24 @@ export class Chat extends EventEmitter {
   }
   cancelQueued() { this.generation++; this.waitAbort.abort(Error('Request cancelled.')); this.waitAbort = new AbortController(); }
   state(): ChatSnapshot {
+    // Only the visible tail is needed, even after thousands of tool calls.
+    const history = this.session.messages; const messages: ChatSnapshot['messages'] = [];
+    for (let index = history.length - 1; index >= 0 && messages.length < 100; index--) {
+      const message = history[index];
+      if (message.role === 'toolResult') {
+        const attachment = message.toolName === 'attach_file' && attachmentOf(message.details);
+        if (attachment) messages.push({ role: 'assistant', text: '', attachments: [attachment] });
+      } else if (message.role === 'user' || message.role === 'assistant') {
+        const text = textOf(message); messages.push({ role: message.role, ...(this.files?.display(text, this.chatId) || { text }) });
+      }
+    }
+    messages.reverse();
     return {
       revision: this.revision, name: this.config.name, model: this.session.model || this.config.model,
       thinking: this.session.thinkingLevel || 'off', thinkingLevels: this.session.getAvailableThinkingLevels?.() || ['off'],
       configured: this.session.modelRuntime.hasConfiguredAuth((this.session.model || this.config.model).provider),
       extensions: this.extensions, busy: this.pending > 0, steerable: this.pending > 0 && !!this.session.isStreaming, current: this.current, tool: this.tool, error: this.error,
-      messages: [...this.session.messages.filter(message => ['user', 'assistant'].includes(message.role) || message.role === 'toolResult' && message.toolName === 'attach_file' && attachmentOf(message.details))
-        .slice(-100).map(message => message.role === 'toolResult'
-          ? { role: 'assistant', text: '', attachments: [attachmentOf(message.details)!] }
-          : { role: message.role, ...(this.files?.display(textOf(message), this.chatId) || { text: textOf(message) }) }),
+      messages: [...messages,
         ...[...this.queued, ...this.steering].map(({ id, version, source, message, steered }) => ({ role: 'user', ...(this.files?.display(message, this.chatId) || { text: message }), queued: true, steered, ...(source === 'web' && !steered ? { queueId: id, version } : {}) }))],
     };
   }

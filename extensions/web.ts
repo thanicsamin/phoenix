@@ -14,7 +14,7 @@ import { pipeline } from 'node:stream/promises';
 import { join } from 'node:path';
 import { attachWebSocket } from './websocket.ts';
 import { lifecycle } from '../src/host.ts';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { isIPv4 } from 'node:net';
 import { log } from '../src/log.ts';
 import { attachBrowserSocket } from './browser-socket.ts';
@@ -121,6 +121,15 @@ export function createWebServer(host: Host, logger = log) {
         const webFile = !path.startsWith('/vendor/') && host.ui ? join(host.ui.root, path === '/' ? 'index.html' : path.slice(1)) : file;
         if (!path.startsWith('/vendor/') && host.ui && !(await realpath(webFile)).startsWith(`${await realpath(host.ui.root)}/`)) return send(404, { error: 'File not found.' });
         let content = await readFile(webFile);
+        if (path !== '/') {
+          // Keep public code on the owner's device, without caching API data or
+          // retaining asset buffers on the VPS. Content hashes also honor rollback.
+          const etag = `"${createHash('sha256').update(content).digest('base64url')}"`;
+          response.setHeader('Cache-Control', 'private, no-cache'); response.setHeader('ETag', etag);
+          if (request.headers['if-none-match']?.split(',').some(value => value.trim() === '*' || value.trim().replace(/^W\//, '') === etag)) {
+            response.writeHead(304); return response.end();
+          }
+        }
         if (path === '/' && plaidNonce) content = Buffer.from(content.toString('utf8').replace(/<\/head>/i, `<meta name="plaid-nonce" content="${plaidNonce}"></head>`));
         if (path === '/' && host.ui?.version) content = Buffer.from(content.toString('utf8').replace(/<\/head>/i, `<meta name="ui-version" content="${host.ui.version}"></head>`));
         response.writeHead(200, { 'Content-Type': contentType });
