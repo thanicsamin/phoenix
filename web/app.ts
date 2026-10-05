@@ -16,6 +16,7 @@ let reconnect: ReturnType<typeof setTimeout> | undefined;
 const drafts = new Map<string, DraftFile[]>();
 const draftMessages = new Map<string, string>();
 let uploading = 0;
+const submitting = new Set<string>();
 let mutations = 0;
 let queueEdit: QueueEdit | undefined;
 const notifications = window.initNotifications({ selectChat: async id => { if (!signedIn || !latest?.chats.some(chat => chat.id === id)) return; switchChat(id); closeChats(); await refresh().catch(() => {}); } });
@@ -275,9 +276,9 @@ function render(state: ChatState) {
   $('#browser').textContent = state.browser?.controlled ? 'Resume browser' : 'Browser';
   $('#agent-error').textContent = state.error;
   $('#key-banner').hidden = state.configured;
-  $('#send').disabled = !state.configured || uploading > 0; $('#send').title = state.busy ? 'Send after the current task' : 'Send message';
+  $('#send').disabled = !state.configured || uploading > 0 || submitting.has(chatId); $('#send').title = state.busy ? 'Send after the current task' : 'Send message';
   $('#send').textContent = queueEdit ? 'Save' : state.busy ? 'Queue' : '↑'; $('#send').classList.toggle('queued', state.busy || !!queueEdit); $('#send').setAttribute('aria-label', queueEdit ? 'Save queued message' : state.busy ? 'Queue message' : 'Send message');
-  $('#steer').hidden = !!queueEdit || !state.steerable || !!state.browser?.controlled; $('#steer').disabled = uploading > 0;
+  $('#steer').hidden = !!queueEdit || !state.steerable || !!state.browser?.controlled; $('#steer').disabled = uploading > 0 || submitting.has(chatId);
   $('#stop').hidden = !state.busy;
   $('#activity').textContent = state.browser?.controlled ? 'You control the browser · Agent paused' : state.approvals.length ? 'Waiting for your approval…' : state.tool ? `Using ${state.tool}…` : state.busy ? 'Thinking…' : '';
   chatUI.render(state, showingArchived);
@@ -354,9 +355,9 @@ $('#login-form').addEventListener('submit', async event => {
 $('#composer').addEventListener('submit', async event => {
   event.preventDefault(); window.stopDictation?.();
   const input = $('#message').value; const message = input.trim(); const files = [...attachments()];
-  if (uploading || (!message && !files.length)) return;
+  if (uploading || submitting.has(chatId) || (!message && !files.length)) return;
   const id = chatId; const steering = event.submitter?.id === 'steer';
-  $('#send').disabled = true; $('#steer').disabled = true;
+  submitting.add(id); $('#send').disabled = true; $('#steer').disabled = true;
   try {
     if (queueEdit) {
       const edit = queueEdit;
@@ -369,7 +370,7 @@ $('#composer').addEventListener('submit', async event => {
     if (draftMessages.get(id) === input) draftMessages.set(id, '');
     if (id === chatId) { if ($('#message').value === input) $('#message').value = ''; sizeComposer(); renderDrafts(); persistDrafts(); revision = -1; await refresh(); }
   } catch (caught) { const error = caught instanceof Error ? caught : new Error(String(caught)); $('#agent-error').textContent = error.message; }
-  finally { $('#send').disabled = !latest?.configured || uploading > 0; $('#steer').disabled = uploading > 0; }
+  finally { submitting.delete(id); $('#send').disabled = !latest?.configured || uploading > 0 || submitting.has(chatId); $('#steer').disabled = uploading > 0 || submitting.has(chatId); }
 });
 $('#message').addEventListener('keydown', event => {
   if (event.isComposing) return;
@@ -529,7 +530,7 @@ async function uploadFiles(files: File[]) {
       drafts.set(id, [...(drafts.get(id) || []), result]); if (id === chatId) renderDrafts();
     }
   } catch (caught) { const error = caught instanceof Error ? caught : new Error(String(caught)); $('#agent-error').textContent = error.message; }
-  finally { uploading--; $('#attach').disabled = false; $('#send').disabled = !latest?.configured; $('#steer').disabled = false; persistDrafts(); }
+  finally { uploading--; $('#attach').disabled = false; $('#send').disabled = !latest?.configured || uploading > 0 || submitting.has(chatId); $('#steer').disabled = uploading > 0 || submitting.has(chatId); persistDrafts(); }
 }
 $('#prompt-form').addEventListener('submit', async event => {
   event.preventDefault(); (event.submitter as HTMLButtonElement).disabled = true; const text = $('#system-prompt').value;

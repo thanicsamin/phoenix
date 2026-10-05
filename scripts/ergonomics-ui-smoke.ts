@@ -67,6 +67,33 @@ try {
   const chat = await api('/api/new', { title: 'Ergonomics QA' }); chatId = chat.id;
   await page.locator('#chat-list').getByRole('button', { name: chat.title, exact: true }).click();
   assert.ok(!requests.some(url => url.includes('/vendor/pdfjs/')), 'PDF renderer was loaded with no PDFs');
+  // Holding the real response reproduces repeated Enter while a send is pending.
+  let promptRequests = 0; let releasePrompt; let promptReceived;
+  const promptGate = new Promise(resolve => { releasePrompt = resolve; });
+  const receivedPrompt = new Promise(resolve => { promptReceived = resolve; });
+  const holdPrompt = async route => {
+    promptRequests++; const response = await route.fetch(); promptReceived();
+    await promptGate; await route.fulfill({ response });
+  };
+  await page.route('**/api/prompt', holdPrompt);
+  try {
+    await page.locator('#message').fill('One keyboard submission'); await page.locator('#message').press('Enter');
+    await receivedPrompt;
+    await page.locator('#message').press('Enter'); await page.locator('#message').press('Enter');
+    await new Promise(resolve => setTimeout(resolve, 150));
+    await page.locator('#message').fill('Draft typed while waiting');
+  } finally { releasePrompt(); await page.unrouteAll({ behavior: 'wait' }); }
+  assert.equal(promptRequests, 1, 'Repeated Enter submitted duplicate messages');
+  await page.waitForFunction(() => !document.querySelector('#send').disabled);
+  assert.equal(await page.locator('#message').inputValue(), 'Draft typed while waiting');
+  // A failed send leaves the draft available and releases the guard for retry.
+  await page.route('**/api/prompt', route => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Fixture temporary failure' }) }), { times: 1 });
+  await page.locator('#message').press('Enter');
+  await page.locator('#agent-error').getByText('Fixture temporary failure', { exact: true }).waitFor();
+  assert.equal(await page.locator('#message').inputValue(), 'Draft typed while waiting');
+  await page.locator('#message').press('Enter');
+  await page.waitForFunction(() => document.querySelector('#message').value === '');
+  assert.equal(sessions.get(chatId).messages.filter(message => message.role === 'user' && message.content === 'One keyboard submission').length, 1);
   // Native clipboard path: actual Ctrl+V of an image, then ordinary text paste.
   await page.evaluate(async bytes => { await navigator.clipboard.write([new ClipboardItem({ 'image/png': new Blob([new Uint8Array(bytes)], { type: 'image/png' }) })]); }, [...png]);
   await page.locator('#message').focus(); await page.keyboard.press('Control+v');
@@ -251,7 +278,7 @@ try {
   releaseRefresh(); await fulfilledAgain; await page.waitForTimeout(100);
   assert.equal(await page.locator('#messages').getByText('After reconnect with a reset counter.', { exact: true }).count(), 1, 'An old connection response replaced the restarted server state');
   assert.deepEqual(errors, []);
-  console.log('Ergonomics UI passed: native image paste, file paste, normal text paste, local image/PDF thumbnails, agent images, queue edits/draft restore/refresh/long press, real browser view/take/return, worker notifications, chat order/pin/unpin, animated desktop sidebar and 320/390/620px mobile layouts.');
+  console.log('Ergonomics UI passed: native image paste, file paste, normal text paste, local image/PDF thumbnails, agent images, duplicate Enter prevention/error retry/draft preservation, queue edits/draft restore/refresh/long press, real browser view/take/return, worker notifications, chat order/pin/unpin, animated desktop sidebar and 320/390/620px mobile layouts.');
 } finally {
   for (const session of sessions.values()) session.finish();
   // Fixture sessions do not have Pi's disposal lifecycle.
