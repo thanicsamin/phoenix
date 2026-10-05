@@ -130,6 +130,12 @@ test('web gates agent/config access, checks origin and CSRF, accepts only valid 
   assert.equal((await post('/api/internet/pair', {}, { ...headers, Origin: 'https://evil.example' })).status, 403);
   const preview = host.auth.preview();
   assert.equal((await post('/api/internet/pair', {}, { Cookie: `phoenix=${preview.token}`, 'X-CSRF-Token': preview.csrf })).status, 403);
+  const previewHeaders = { Cookie: `phoenix=${preview.token}`, 'X-CSRF-Token': preview.csrf };
+  for (const path of ['/api/prompt', '/api/steer', '/api/queue/edit', '/api/approval', '/api/autoreview', '/api/jobs', '/api/setup', '/api/workspace/file']) {
+    assert.equal((await post(path, { message: 'Approve my own action', allow: true, enabled: true }, previewHeaders)).status, 403);
+  }
+  assert.deepEqual(messages, []);
+  assert.equal((await fetch(`${base}/api/state`, { headers: { Cookie: previewHeaders.Cookie } })).status, 200);
   assert.deepEqual(await (await post('/api/internet/pair', {}, headers)).json(), { client: 'Connector source' });
   assert.equal((await post('/api/internet/route', { enabled: true }, headers)).status, 200); assert.equal(routes, 1);
   assert.equal((await post('/api/prompt', { message: 'hello' }, { ...headers, Origin: 'https://evil.example' })).status, 403);
@@ -216,4 +222,28 @@ test('request logs correlate failures without recording passwords, headers, bodi
   assert.equal(failure.requestId, body.requestId); assert.equal(request.requestId, body.requestId);
   assert.equal(request.route, '/api/setup'); assert.ok(request.durationMs >= 0);
   for (const value of ['logging-test-password', cookie, csrf, 'private-query-value', 'untrusted-id']) assert.ok(!lines.join('').includes(value));
+});
+
+test('owner auto-review preferences persist per chat; previews and invalid requests cannot change them', async t => {
+  const { Host } = await import('../src/host.ts'); const { loadConfig } = await import('../src/config.ts');
+  const directory = await mkdtemp(join(tmpdir(), 'phoenix-review-settings-')); t.after(() => rm(directory, { recursive: true, force: true }));
+  const config = await loadConfig('agent.json'); const host = new Host(config, directory, join(directory, 'workspace')); await host.initialize();
+  host.auth = await createAuth(directory, { password: 'review-settings-password' }); const side = await host.createChat('Review fixture');
+  const server = createWebServer(host); server.listen(0, '127.0.0.1'); await once(server, 'listening'); host.port = server.address().port;
+  t.after(async () => { await host.close(); host.auth.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
+  const base = `http://127.0.0.1:${host.port}`; const owner = await host.auth.login('review-settings-password'); const preview = host.auth.preview();
+  const headers = { Origin: base, 'Content-Type': 'application/json', Cookie: `phoenix=${owner.token}`, 'X-CSRF-Token': owner.csrf };
+  const post = (body, extra = {}) => fetch(base + '/api/autoreview', { method: 'POST', headers: { ...headers, ...extra }, body: JSON.stringify(body) });
+  assert.equal(config.extensions.permissions.autoReview, true);
+  assert.equal((await post({ enabled: false }, { Cookie: '' })).status, 401);
+  assert.equal((await post({ enabled: false }, { 'X-CSRF-Token': '' })).status, 403);
+  assert.equal((await post({ enabled: false }, { Origin: 'https://foreign.example' })).status, 403);
+  assert.equal((await post({ enabled: false }, { Cookie: `phoenix=${preview.token}`, 'X-CSRF-Token': preview.csrf })).status, 403);
+  assert.equal((await post({ enabled: 'false' })).status, 400);
+  assert.equal((await post({ chatId: 'missing', enabled: false })).status, 404);
+  assert.equal((await post({ chatId: side.id, enabled: false })).status, 200);
+  assert.equal(host.record(side.id).autoReview, false); assert.equal(host.record().autoReview, undefined);
+  const restored = new Host(config, directory, join(directory, 'workspace')); await restored.initialize(); t.after(() => restored.close());
+  assert.equal(restored.record(side.id).autoReview, false);
+  assert.equal((await post({ chatId: side.id, enabled: true })).status, 200); assert.equal(host.record(side.id).autoReview, true);
 });

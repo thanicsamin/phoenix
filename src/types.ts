@@ -17,10 +17,10 @@ export interface ChatRecord {
   route?: string; model?: ModelSelection; thinking?: Thinking;
   archived?: boolean; pinned?: boolean; lastSentAt?: number; folder?: string; autoTitle?: boolean;
   deleted?: boolean;
-  readRisk?: number;
+  readRisk?: number; autoReview?: boolean;
 }
 export interface StoredAttachment extends Attachment { role: string; used: boolean }
 export interface QueuedMessage {
-  id: string; version: number; message: string; source: string; images: ImageContent[]; steered?: false;
+  id: string; version: number; message: string; source: string; images: ImageContent[]; ownerRequest?: string; steered?: false;
 }
 export interface SteeringMessage { id?: undefined; version?: undefined; message: string; source: string; steered: true }

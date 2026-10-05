@@ -24,6 +24,7 @@ export interface ChatSnapshot {
   thinking: Thinking; thinkingLevels: Thinking[]; configured: boolean;
   extensions: Record<string, string>; busy: boolean; steerable: boolean;
   current: string; tool: string; error: string; messages: DisplayMessage[];
+  reviewing?: boolean;
 }
 export interface ChatState extends ChatSnapshot {
   chatId: string; title: string; archived: boolean; pinned: boolean; folder?: string; folders?: string[]; uiVersion?: string;
@@ -31,6 +32,7 @@ export interface ChatState extends ChatSnapshot {
   models: { provider: string; id: string; name: string }[]; chats: ChatSummary[]; jobs: Job[];
   providers?: { id: string; name: string; configured: boolean; server?: { baseUrl: string; modelIds: string[]; contextWindow: number; vision: boolean; reasoning: boolean } }[];
   approvals: { id: string; tool: string; args: unknown; reason?: string }[];
+  autoReview?: boolean;
 }
 
 export interface PlaidStatus {

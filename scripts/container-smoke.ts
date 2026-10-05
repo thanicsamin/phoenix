@@ -19,3 +19,5 @@ await import('./plaid-ui-smoke.ts');
 await import('./providers-ui-smoke.ts');
 await import('./chats-ui-smoke.ts');
 await import('./scheduling-ui-smoke.ts');
+
+await import('./autoreview-smoke.ts');

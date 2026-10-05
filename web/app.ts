@@ -280,7 +280,8 @@ function render(state: ChatState) {
   $('#send').textContent = queueEdit ? 'Save' : state.busy ? 'Queue' : '↑'; $('#send').classList.toggle('queued', state.busy || !!queueEdit); $('#send').setAttribute('aria-label', queueEdit ? 'Save queued message' : state.busy ? 'Queue message' : 'Send message');
   $('#steer').hidden = !!queueEdit || !state.steerable || !!state.browser?.controlled; $('#steer').disabled = uploading > 0 || submitting.has(chatId);
   $('#stop').hidden = !state.busy;
-  $('#activity').textContent = state.browser?.controlled ? 'You control the browser · Agent paused' : state.approvals.length ? 'Waiting for your approval…' : state.tool ? `Using ${state.tool}…` : state.busy ? 'Thinking…' : '';
+  $('#auto-review').checked = state.autoReview !== false;
+  $('#activity').textContent = state.browser?.controlled ? 'You control the browser · Agent paused' : state.approvals.length ? 'Waiting for your approval…' : state.reviewing ? 'Reviewing action…' : state.tool ? `Using ${state.tool}…` : state.busy ? 'Thinking…' : '';
   chatUI.render(state, showingArchived);
   stableChildren('#approvals', state.approvals, () => state.approvals.map(approval => {
     const card = document.createElement('div'); card.className = 'approval-card';
@@ -387,6 +388,12 @@ $('#message').addEventListener('keydown', event => {
 });
 for (const button of document.querySelectorAll<HTMLElement>('[data-prompt]')) button.addEventListener('click', () => { $('#message').value = button.dataset.prompt || ''; $('#message').focus(); });
 $('#stop').addEventListener('click', async () => { try { await api('/api/cancel', { chatId }); } catch (caught) { const error = caught instanceof Error ? caught : new Error(String(caught)); $('#agent-error').textContent = error.message; } });
+$('#auto-review').addEventListener('change', async () => {
+  const id = chatId; const enabled = $('#auto-review').checked; $('#auto-review').disabled = true;
+  try { await api('/api/autoreview', { chatId: id, enabled }); }
+  catch (caught) { const error = caught instanceof Error ? caught : new Error(String(caught)); await refresh().catch(() => {}); $('#agent-error').textContent = error.message; }
+  finally { $('#auto-review').disabled = false; }
+});
 $('#settings').addEventListener('click', openSettings);
 $('#mobile-settings').addEventListener('click', openSettings);
 $('#connect-key').addEventListener('click', openSettings);

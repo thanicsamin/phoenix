@@ -39,6 +39,7 @@ export class Chat extends EventEmitter {
   config: Config; dataDir: string; workspace: string;
   revision = 0; pending = 0; closing = false; extensions: Record<string, string> = {};
   current = ''; tool = ''; error = ''; queue: Promise<void>; cleanups: Cleanup[];
+  ownerRequests: string[] = []; reviewBlocked = false; reviewing = 0;
   source: string; queued: QueuedMessage[]; steering: SteeringMessage[]; generation: number;
   waitAbort: AbortController; session!: AgentSession; files?: Files; chatId = 'main';
   browserControl?: BrowserControl; lastUsed = Date.now(); unsubscribe?: () => void; notice?: Notice;
@@ -75,13 +76,13 @@ export class Chat extends EventEmitter {
       this.changed();
     });
   }
-  submit(message: string, source = 'web', images: ImageContent[] = []) {
+  submit(message: string, source = 'web', images: ImageContent[] = [], ownerRequest = message) {
     if (this.closing) return Promise.reject(new Error('Agent is shutting down.'));
     if (typeof message !== 'string' || !message.trim() || message.length > 40000 || (this.files?.display(message, this.chatId).text || message).length > 32000) return Promise.reject(new Error('Message must contain 1–32000 characters.'));
     if (this.pending >= 10) return Promise.reject(new Error('Agent queue is full. Try again shortly.'));
     this.pending++;
     const runId = randomUUID();
-    const queued: QueuedMessage = { id: runId, version: 0, message, source, images };
+    const queued: QueuedMessage = { id: runId, version: 0, message, source, images, ownerRequest };
     const origin = source === 'web' ? 'web' : source.startsWith('Scheduled task:') ? 'scheduler' : source === 'Incoming email' ? 'email' : 'channel';
     const generation = this.generation;
     const waitSignal = this.waitAbort.signal;
@@ -94,6 +95,8 @@ export class Chat extends EventEmitter {
       this.queued = this.queued.filter(item => item !== queued);
       this.error = '';
       this.source = source;
+      this.ownerRequests = source === 'web' || source.startsWith('Scheduled task: ') ? [queued.ownerRequest || queued.message] : [];
+      this.reviewBlocked = false;
       const started = performance.now();
       log.info('run.started', { runId, chatId: this.chatId, origin, queued: this.pending - 1 });
       const start = this.session.messages.length;
@@ -120,6 +123,7 @@ export class Chat extends EventEmitter {
       this.tool = '';
       this.source = 'web';
       this.steering = [];
+      this.ownerRequests = [];
       this.changed();
     });
     return job;
@@ -130,13 +134,14 @@ export class Chat extends EventEmitter {
     if (queued.version !== version) throw Object.assign(Error('This queued message changed in another window. Reopen it to edit.'), { status: 409 });
     return queued;
   }
-  async steer(message: string, images: ImageContent[] = []) {
+  async steer(message: string, images: ImageContent[] = [], ownerRequest = message) {
     if (this.browserControl?.controlled) throw Object.assign(new Error('Return browser control to the agent first.'), { status: 409 });
     if (this.closing || !this.pending || !this.session.isStreaming) throw Object.assign(new Error('Steer is available while the agent is responding.'), { status: 409 });
     if (!message.trim() || message.length > 40000 || (this.files?.display(message, this.chatId).text || message).length > 32000 || this.steering.length >= 10) throw Object.assign(new Error('Write a steering message of up to 32000 characters.'), { status: 400 });
     const queued: SteeringMessage = { message, source: 'web', steered: true }; this.steering.push(queued); this.changed();
+    const previous = this.ownerRequests; const requests = [...previous, ownerRequest]; this.ownerRequests = requests;
     try { await this.session.prompt(message, { expandPromptTemplates: false, streamingBehavior: 'steer', images }); }
-    catch (caught) { const error = errorOf(caught); this.steering = this.steering.filter(item => item !== queued); this.changed(); throw error; }
+    catch (caught) { const error = errorOf(caught); if (this.ownerRequests === requests) this.ownerRequests = previous; this.steering = this.steering.filter(item => item !== queued); this.changed(); throw error; }
   }
   cancelQueued() { this.generation++; this.waitAbort.abort(Error('Request cancelled.')); this.waitAbort = new AbortController(); }
   state(): ChatSnapshot {
@@ -157,7 +162,7 @@ export class Chat extends EventEmitter {
       revision: this.revision, name: this.config.name, model: this.session.model || this.config.model,
       thinking: this.session.thinkingLevel || 'off', thinkingLevels: this.session.getAvailableThinkingLevels?.() || ['off'],
       configured: this.session.modelRuntime.hasConfiguredAuth((this.session.model || this.config.model).provider),
-      extensions: this.extensions, busy: this.pending > 0, steerable: this.pending > 0 && !!this.session.isStreaming, current: this.current, tool: this.tool, error: this.error,
+      extensions: this.extensions, busy: this.pending > 0, steerable: this.pending > 0 && !!this.session.isStreaming, reviewing: this.reviewing > 0, current: this.current, tool: this.tool, error: this.error,
       messages: [...messages,
         ...[...this.queued, ...this.steering].map(({ id, version, source, message, steered }) => ({ role: 'user', ...(this.files?.display(message, this.chatId) || { text: message }), queued: true, steered, ...(source === 'web' && !steered ? { queueId: id, version } : {}) }))],
     };
@@ -208,6 +213,7 @@ export class Host extends EventEmitter {
       || (record.lastSentAt !== undefined && (!Number.isSafeInteger(record.lastSentAt) || record.lastSentAt < 0))
       || (record.folder !== undefined && !folderSchema.safeParse(record.folder).success)
       || (record.autoTitle !== undefined && typeof record.autoTitle !== 'boolean')
+      || (record.autoReview !== undefined && typeof record.autoReview !== 'boolean')
       || (record.deleted !== undefined && typeof record.deleted !== 'boolean')
       || (record.readRisk !== undefined && (!Number.isInteger(record.readRisk) || record.readRisk < 0 || record.readRisk > 3))
       || typeof record.title !== 'string' || !Array.isArray(record.jobs) || !Array.isArray(record.permissions))) throw new Error('Invalid chat metadata.');
@@ -387,7 +393,7 @@ export class Host extends EventEmitter {
     await this.markAttachments(id, attachmentIds);
     const pending = chat.pending;
     if (this.providerUpdating) throw Object.assign(Error('Provider settings are being updated. Try again shortly.'), { status: 409 });
-    const result = chat.submit(input.message, source, input.images);
+    const result = chat.submit(input.message, source, input.images, message);
     if (source === 'web' && chat.pending > pending) {
       const record = this.record(id);
       if (record.autoTitle && record.title === 'New chat') record.title = [...redact(message.trim() || 'Attachments').replace(/\s+/g, ' ')].filter(char => validLabel(char)).join('').split(' ').slice(0, 10).join(' ').slice(0, 80) || 'New chat';
@@ -399,7 +405,7 @@ export class Host extends EventEmitter {
     const chat = await this.getChat(id);
     const input = await this.files.prepare(message, attachmentIds, id, chat.session.model);
     await this.markAttachments(id, attachmentIds);
-    const result = chat.steer(input.message, input.images);
+    const result = chat.steer(input.message, input.images, message);
     if (chat.steering.some(item => item.message === input.message)) this.sent(id);
     return result;
   }
@@ -409,7 +415,7 @@ export class Host extends EventEmitter {
     const input = await this.files.prepare(message, attachments, id, chat.session.model);
     await this.markAttachments(id, attachments);
     const queued = chat.editable(queueId, version); // Upload preparation can yield to the running task.
-    queued.message = input.message; queued.images = input.images; queued.version++;
+    queued.message = input.message; queued.ownerRequest = message; queued.images = input.images; queued.version++;
     chat.changed();
   }
   async markAttachments(id: string, attachments: string[]) {
@@ -426,6 +432,7 @@ export class Host extends EventEmitter {
       chats: this.records.filter(chat => !chat.deleted).sort((a, b) => Number(b.id === 'main') - Number(a.id === 'main') || Number(!!b.pinned) - Number(!!a.pinned) || (b.lastSentAt || 0) - (a.lastSentAt || 0)).map(({ id, title, jobs, archived, pinned, folder }) => ({ id, title, folder, archived: !!archived, pinned: !!pinned, jobs: jobs.filter(job => job.enabled).length,
         busy: (this.loaded.get(id)?.pending || 0) > 0, notice: this.loaded.get(id)?.notice, approval: [...this.approvals.values()].find(item => item.chatId === id)?.id || false as const })), jobs: record.jobs,
       approvals: [...this.approvals.values()].filter(approval => approval.chatId === id).map(({ id, tool, args, reason }) => ({ id, tool, args, reason })),
+      autoReview: record.autoReview ?? (this.config.extensions?.permissions?.autoReview ?? true),
     };
   }
   async exportSetup() {
@@ -507,6 +514,7 @@ export class Host extends EventEmitter {
   async approve(id: string, allow: boolean, remember = false) {
     const approval = this.approvals.get(id);
     if (!approval) throw Object.assign(new Error('Approval expired.'), { status: 404 });
+    if (!allow) { const chat = this.loaded?.get(approval.chatId); if (chat) chat.reviewBlocked = true; }
     if (remember && allow && !approval.reason && approval.tool !== 'browser_verification') {
       const permissions = this.record(approval.chatId).permissions;
       if (!permissions.includes(approval.tool)) permissions.push(approval.tool);

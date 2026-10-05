@@ -106,6 +106,7 @@
     </form>
     <label for="theme">Theme</label><select id="theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select>
     <button id="notifications" type="button" aria-pressed="false">Enable notifications</button><p id="notification-status" class="muted" role="status"></p>
+    <label><input id="auto-review" type="checkbox"> Auto-review low-risk actions in this chat</label>
     <details><summary>System prompt</summary><form id="prompt-form"><label class="sr-only" for="system-prompt">System prompt</label><textarea id="system-prompt" rows="9" maxlength="200000"></textarea><button type="submit" class="primary">Save prompt</button><p id="prompt-status" class="muted" role="status"></p></form></details>
     <details id="internet-settings" hidden><summary>Internet</summary><p id="internet-status" class="muted" role="status"></p><div class="setup-actions"><button id="internet-toggle">Use my internet</button><button id="internet-forget" hidden>Disconnect computer</button></div><p id="internet-error" class="error" role="alert"></p></details>
     <details id="plaid-settings"><summary>Finances</summary>

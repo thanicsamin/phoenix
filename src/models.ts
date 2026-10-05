@@ -32,13 +32,14 @@ export async function saveProviderKey(runtime: ModelRuntime, provider: unknown, 
 // Pi's auxiliary requests can omit its session ID. Apply the conversation ID
 // at the HTTP boundary so retries, compaction and model changes share it too.
 export function openCodeSessionHeaders(sessionId: string): ExtensionFactory {
-  return pi => { pi.on('before_provider_headers', ({ headers }, context) => {
-    for (const name of Object.keys(headers)) {
-      if (['x-opencode-session', 'user-agent'].includes(name.toLowerCase())) delete headers[name];
-    }
-    if (openCodeProviders.includes(context.model?.provider || '')) headers['x-opencode-session'] = sessionId;
-    headers['User-Agent'] = 'phoenix-agent/0.1.0';
-  }); };
+  return pi => { pi.on('before_provider_headers', ({ headers }, context) => { phoenixRequestHeaders(headers, context.model?.provider || '', sessionId); }); };
+}
+
+export function phoenixRequestHeaders(headers: Record<string, string | null>, provider: string, sessionId: string) {
+  for (const name of Object.keys(headers)) if (['x-opencode-session', 'user-agent'].includes(name.toLowerCase())) delete headers[name];
+  if (openCodeProviders.includes(provider)) headers['x-opencode-session'] = sessionId;
+  headers['User-Agent'] = 'phoenix-agent/0.1.0';
+  return headers;
 }
 
 export function configureOpenCode(runtime: ModelRuntime) {

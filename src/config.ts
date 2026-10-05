@@ -46,7 +46,7 @@ export const configSchema = z.strictObject({
     files: z.strictObject({}).default({}),
     system: z.strictObject({}).default({}),
     scheduler: z.strictObject({}).default({}),
-    permissions: z.strictObject({}).default({}),
+    permissions: z.strictObject({ autoReview: z.boolean().default(true) }).prefault({}),
     tunnel: z.strictObject({ mode: z.enum(['quick', 'named']), url: z.url().optional() }).optional(),
     telegram: z.strictObject({ tokenEnv: envName.default('TELEGRAM_BOT_TOKEN'), allowUsers: users }).optional(),
     slack: z.strictObject({ appTokenEnv: envName.default('SLACK_APP_TOKEN'), tokenEnv: envName.default('SLACK_BOT_TOKEN'), allowUsers: users }).optional(),

@@ -19,6 +19,7 @@ interface DraftFile extends Attachment { queued?: boolean }
 interface QueueEdit { id: string; version: number; message: string; files: DraftFile[] }
 interface NotificationController { read: () => void; reset: () => void; update: (chats: ChatSummary[], activeChat: string) => void }
 interface Elements {
+  '#auto-review': HTMLInputElement;
   '#login': HTMLElement;
   '#login-form': HTMLFormElement;
   '#password': HTMLInputElement;

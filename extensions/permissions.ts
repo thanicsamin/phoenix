@@ -4,6 +4,7 @@ import type { ExtensionOptions } from '../src/types.ts';
 import { approvalReason, readRisk, isOwnerUI, untrusted, privateData } from '../src/policy.ts';
 import { textOf } from '../src/host.ts';
 import { log } from '../src/log.ts';
+import { autoReview } from '../src/autoreview.ts';
 export default function permissions(pi: ExtensionAPI, host: Host, _options: ExtensionOptions<'permissions'>, chatId = 'main') {
   host.extensions.permissions = 'ready';
   pi.on('before_agent_start', async event => {
@@ -31,12 +32,16 @@ export default function permissions(pi: ExtensionAPI, host: Host, _options: Exte
       const verification = !(before & privateData) && externalWrite && event.toolName === 'browser' && await host.browserControls?.get(chatId)?.verificationAllowed?.();
       if (before !== (record.readRisk || 0)) continue;
       if ((reason || externalWrite) && !verification) {
+        const generation = chat.generation; const requests = chat.ownerRequests;
+        const reviewed = await autoReview(host, chatId, event.toolName, event.input);
+        if (generation !== chat.generation || chat.closing || host.closing || chat.browserControl?.controlled) return { block: true, reason: 'Request cancelled or browser controlled by the owner.' };
+        if (before !== (record.readRisk || 0) || chat.ownerRequests !== requests) continue;
         const location = event.toolName === 'browser' && event.input.action !== 'navigate' ? host.browserPages?.get(chatId)?.() : undefined;
         // Identify the page for consent, without exposing its path/query tokens.
         const args = location && URL.canParse(location) && ['http:', 'https:'].includes(new URL(location).protocol)
           ? { ...event.input, site: new URL(location).origin } : event.input;
-        const approved = await host.requestApproval(chatId, event.toolName, args, undefined, reason || undefined);
-        log.info(approved ? 'policy.allowed' : 'policy.denied', { chatId, tool: event.toolName, rule: reason ? 'information-flow' : 'external-action' });
+        const approved = reviewed || await host.requestApproval(chatId, event.toolName, args, undefined, reason || undefined);
+        log.info(approved ? 'policy.allowed' : 'policy.denied', { chatId, tool: event.toolName, rule: reviewed ? 'autoreview' : reason ? 'information-flow' : 'external-action' });
         if (!approved) return { block: true, reason: 'The owner did not approve this action. Keep the work as a draft and report it in chat.' };
         // Another read may finish while consent is pending. Recheck its stricter contract.
         if (before !== (record.readRisk || 0)) continue;

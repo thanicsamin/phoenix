@@ -363,12 +363,30 @@ Web reads mark the chat as containing untrusted data. Email, shell output and
 unclassified tools are treated as potentially private and untrusted. Finances,
 memory reads and recognized credential/private-file paths mark it as private. Uploaded attachments are marked as both private and
 untrusted before the model sees them, including when steered or queued. After outside reads, commands, edits, jobs, shared
-memory changes, unknown tools and external writes require a specific owner
-approval. After private reads, outgoing requests (including browser navigation),
+memory changes, unknown tools and external writes require a specific action
+check. Eligible low-risk actions can pass the independent review described below. After private reads, outgoing requests (including browser navigation),
 shell commands and custom tools require approval. Local UI previews and ordinary
 public browsing continue while only the untrusted marker is set.
 Automatic channel replies also require a specific approval after private reads;
 they cannot bypass the tool hooks by sending the model's final answer directly.
+
+Auto-review is on by default. Before showing an approval card, an independent,
+tool-free call to the current chat's model can approve routine public browser
+clicks/searches and explicitly requested workspace edits. It receives the original
+owner request and steering text, proposed action and bounded target metadata;
+it does not receive agent history, page content, attachment text, credentials or
+the editable system prompt. Each verdict covers one action, with a 20-second
+limit. This adds a small provider request for eligible actions.
+
+Private-marked chats, incoming channels, sends, shell commands, jobs, protected
+files and unknown tools retain owner consent. Purchases, account/credential
+controls and uncertainty also go to the owner. Failed, malformed, interrupted or
+stale reviews fall back to native approval; Stop cancels work, and Deny prevents
+further automatic approvals for that reply. **Settings → Auto-review low-risk
+actions in this chat** saves a per-chat override. Set
+`"permissions": { "autoReview": false }` under `extensions` to disable the default.
+Agent preview sessions are read-only: they cannot submit owner prompts, approve
+actions or change settings. Owner browser controls continue to work normally.
 
 These checks use **Allow once**, never a remembered tool-wide approval. CAPTCHA
 consent cannot authorize sending private data. Markers persist in chat metadata

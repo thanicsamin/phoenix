@@ -152,6 +152,7 @@ export function createWebServer(host: Host, logger = log) {
         if (!auth) return send(401, { error: 'Sign in to continue.' });
         if (request.headers['x-csrf-token'] !== auth.csrf) return send(403, { error: 'Invalid session token.' });
       } else if (!auth) return send(401, { error: 'Sign in to continue.' });
+      if (auth.preview && request.method !== 'GET' && path !== '/api/logout') return send(403, { error: 'Agent previews are read-only. Sign in as the owner to make changes.' });
       const query = new URL(request.url || '/', `http://${authority}`).searchParams;
       if (path.startsWith('/api/plaid/')) {
         if (auth.preview) return send(403, { error: 'Sign in as the owner to manage finances.' });
@@ -296,6 +297,14 @@ export function createWebServer(host: Host, logger = log) {
         const { message, chatId = 'main', attachments = [] } = await readBody(request);
         if (typeof message !== 'string' || !Array.isArray(attachments) || (!message.trim() && !attachments.length) || message.length > 32000) return send(400, { error: 'Write a steering message.' });
         await host.steer(message || 'Please inspect the attached files.', chatId, attachments); return send(202, {});
+      }
+      if (request.method === 'POST' && path === '/api/autoreview') {
+        const { chatId = 'main', enabled } = await readBody(request);
+        if (typeof enabled !== 'boolean') return send(400, { error: 'Choose whether to use automatic review.' });
+        const record = host.record(chatId); const previous = record.autoReview;
+        record.autoReview = enabled;
+        try { await host.save(); } catch (error) { record.autoReview = previous; throw error; }
+        host.changed(); return send(200, {});
       }
       if (request.method === 'POST' && path === '/api/queue/edit') {
         const { chatId = 'main', queueId, version, message, attachments = [] } = await readBody(request);
