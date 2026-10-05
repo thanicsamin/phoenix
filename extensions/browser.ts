@@ -136,7 +136,8 @@ export default function browser(pi: ExtensionAPI, host: Host, options: Extension
   }
   // Pause all agent tools in this chat while the owner signs in.
   pi.on('tool_call', () => control.controlled ? { block: true, reason: 'The owner has taken browser control. Wait for handback.' } : undefined);
-  const isBlocked = (snapshot: string) => ![`http://localhost:${host.port}`, `http://127.0.0.1:${host.port}`].includes(new URL(page!.url()).origin) && /captcha|robot or human|unusual traffic|confirm you are human|select all (?:squares|images)|verify (?:that )?you are human|verify you are (?:a )?human|not a robot|checking your browser|performing security verification|enable javascript and cookies to continue/i.test(snapshot);
+  // Link destinations are source data, not evidence of a challenge widget.
+  const isBlocked = (snapshot: string) => ![`http://localhost:${host.port}`, `http://127.0.0.1:${host.port}`].includes(new URL(page!.url()).origin) && /captcha|robot or human|unusual traffic|confirm you are human|select all (?:squares|images)|verify (?:that )?you are human|verify you are (?:a )?human|not a robot|checking your browser|performing security verification|enable javascript and cookies to continue/i.test(snapshot.replace(/^\s*- \/url:.*$/gm, ''));
   const snapshotPage = async () => {
     let snapshot = await page!.locator('body').ariaSnapshot({ timeout: 15000 });
     // Challenge widgets often live in cross-origin frames. Include their
