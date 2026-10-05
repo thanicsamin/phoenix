@@ -119,6 +119,40 @@ try {
   assert.equal(await page.locator('#message').inputValue(), 'Edited with arrow');
   await page.getByRole('button', { name: 'Cancel editing queued message', exact: true }).click(); assert.equal(await page.locator('#message').inputValue(), 'Preserve my draft');
   await page.locator('.message[data-queue-id]').click({ button: 'right' });
+  // A slow save must preserve text and uploads created after it was submitted.
+  for (const change of ['text', 'file']) {
+    let releaseEdit; let editReceived;
+    const editGate = new Promise(resolve => { releaseEdit = resolve; });
+    const receivedEdit = new Promise(resolve => { editReceived = resolve; });
+    await page.route('**/api/queue/edit', async route => {
+      const response = await route.fetch(); editReceived(); await editGate; await route.fulfill({ response });
+    });
+    try {
+      await page.getByRole('button', { name: 'Save queued message', exact: true }).click(); await receivedEdit;
+      if (change === 'text') await page.locator('#message').fill('Still writing the queued edit');
+      else {
+        await page.locator('#attachment-files').setInputFiles({ name: 'late-upload.png', mimeType: 'image/png', buffer: png });
+        await page.getByLabel('Remove late-upload.png', { exact: true }).waitFor();
+      }
+    } finally { releaseEdit(); await page.unrouteAll({ behavior: 'wait' }); }
+    await page.waitForFunction(() => !document.querySelector('#send').disabled);
+    assert.equal(await page.locator('#message').inputValue(), 'Still writing the queued edit', `Late ${change} change erased by save`);
+    assert.equal(await page.locator('#queue-edit').isVisible(), true);
+    if (change === 'file') assert.equal(await page.getByLabel('Remove late-upload.png', { exact: true }).count(), 1);
+  }
+  // Failure keeps unsaved text/files and does not advance the queue version.
+  await page.route('**/api/queue/edit', route => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Fixture queued edit failure' }) }), { times: 1 });
+  await page.getByRole('button', { name: 'Save queued message', exact: true }).click();
+  await page.locator('#agent-error').getByText('Fixture queued edit failure', { exact: true }).waitFor();
+  assert.equal(await page.locator('#message').inputValue(), 'Still writing the queued edit');
+  assert.equal(await page.getByLabel('Remove late-upload.png', { exact: true }).count(), 1);
+  // Successive saves use the new version; an unchanged save restores the old draft.
+  await page.getByRole('button', { name: 'Save queued message', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('#message').value === 'Preserve my draft');
+  await page.locator('.message[data-queue-id]').getByText('Still writing the queued edit', { exact: true }).waitFor();
+  await page.locator('.message[data-queue-id]').getByText('late-upload.png', { exact: true }).waitFor();
+  await page.locator('.message[data-queue-id]').click({ button: 'right' });
+  await page.getByLabel('Remove late-upload.png', { exact: true }).click();
   await page.locator('#message').fill('Final queued text'); await page.getByRole('button', { name: 'Save queued message', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('#message').value === 'Preserve my draft');
   const session = sessions.get(chatId); session.finish(); await host.loaded.get(chatId).queue;
@@ -278,7 +312,7 @@ try {
   releaseRefresh(); await fulfilledAgain; await page.waitForTimeout(100);
   assert.equal(await page.locator('#messages').getByText('After reconnect with a reset counter.', { exact: true }).count(), 1, 'An old connection response replaced the restarted server state');
   assert.deepEqual(errors, []);
-  console.log('Ergonomics UI passed: native image paste, file paste, normal text paste, local image/PDF thumbnails, agent images, duplicate Enter prevention/error retry/draft preservation, queue edits/draft restore/refresh/long press, real browser view/take/return, worker notifications, chat order/pin/unpin, animated desktop sidebar and 320/390/620px mobile layouts.');
+  console.log('Ergonomics UI passed: native image paste, file paste, normal text paste, local image/PDF thumbnails, agent images, duplicate Enter prevention/error retry/draft preservation, queue edits/late text and upload preservation/error retry/draft restore/refresh/long press, real browser view/take/return, worker notifications, chat order/pin/unpin, animated desktop sidebar and 320/390/620px mobile layouts.');
 } finally {
   for (const session of sessions.values()) session.finish();
   // Fixture sessions do not have Pi's disposal lifecycle.

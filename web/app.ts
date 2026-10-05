@@ -362,7 +362,12 @@ $('#composer').addEventListener('submit', async event => {
     if (queueEdit) {
       const edit = queueEdit;
       await api('/api/queue/edit', { chatId: id, queueId: edit.id, version: edit.version, message, attachments: files.map(file => file.id) });
-      if (chatId === id && queueEdit === edit) { drafts.set(id, []); cancelQueueEdit(); persistDrafts(); await refresh(); }
+      if (chatId === id && queueEdit === edit) {
+        const unchanged = $('#message').value === input && attachments().length === files.length && files.every((file, index) => file === attachments()[index]);
+        if (unchanged) { drafts.set(id, []); cancelQueueEdit(); }
+        else edit.version++; // The server saved the submitted version; keep subsequent edits.
+        persistDrafts(); await refresh();
+      }
       return;
     }
     await api(steering ? '/api/steer' : '/api/prompt', { message, chatId: id, attachments: files.map(file => file.id) });
