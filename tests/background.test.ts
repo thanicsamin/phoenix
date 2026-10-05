@@ -48,6 +48,41 @@ test('due one-shot jobs execute with no browser client and do not repeat', async
   tick(host);
   assert.equal(runs.length, 1); assert.equal(job.enabled, false); assert.equal(job.nextRunAt, null);
 });
+test('schedule changes preserve identity and history, validate before mutation and stay within their chat', async t => {
+  const { host, config, directory } = await fixture(t);
+  const side = await host.createChat('Shopping');
+  const job = await host.addJob(side.id, { name: 'Weekly', prompt: 'Compare offers', everyMinutes: 10080 });
+  job.lastRunAt = new Date(0).toISOString(); job.lastError = 'Previous failure'; await host.save();
+  const before = JSON.stringify(job);
+  for (const changes of [{}, { everyMinutes: -1 }, { nextRunAt: 'tomorrow' }, { enabled: 'false' }, { id: 'replace-id' }, { prompt: '' }]) {
+    await assert.rejects(host.updateJob(side.id, job.id, changes)); assert.equal(JSON.stringify(job), before);
+  }
+  await assert.rejects(host.updateJob('main', job.id, { name: 'Wrong chat' }), { status: 404 });
+  await assert.rejects(host.removeJob('main', job.id), { status: 404 });
+  const now = Date.now();
+  await host.updateJob(side.id, job.id, { everyMinutes: 60, prompt: 'Compare delivered prices', enabled: false });
+  assert.equal(job.id, JSON.parse(before).id); assert.equal(job.name, 'Weekly'); assert.equal(job.lastRunAt, new Date(0).toISOString()); assert.equal(job.lastError, 'Previous failure');
+  assert.ok(Date.parse(job.nextRunAt) >= now + 3600000); assert.equal(job.enabled, false);
+  const next = job.nextRunAt; await host.updateJob(side.id, job.id, { name: 'Hourly', enabled: true });
+  assert.equal(job.everyMinutes, 60); assert.equal(job.nextRunAt, next); assert.equal(job.enabled, true);
+  const resumed = new Host(config, directory, directory); await resumed.initialize();
+  assert.deepEqual(resumed.record(side.id).jobs[0], job);
+  job.running = true;
+  await assert.rejects(host.updateJob(side.id, job.id, { enabled: false }), { status: 409 });
+  await assert.rejects(host.removeJob(side.id, job.id), { status: 409 });
+  job.running = false; await host.removeJob(side.id, job.id);
+  const restored = new Host(config, directory, directory); await restored.initialize(); assert.equal(restored.record(side.id).jobs.length, 0);
+});
+test('paused overdue tasks remain on disk; resume catches up once and completed tasks need a new start', async t => {
+  const { host, runs } = await fixture(t);
+  const job = await host.addJob('main', { name: 'Paused', prompt: 'Work', everyMinutes: 0, nextRunAt: new Date(0).toISOString() });
+  await host.updateJob('main', job.id, { enabled: false }); await recoverJobs(host); tick(host); assert.equal(runs.length, 0);
+  await host.updateJob('main', job.id, { enabled: true }); tick(host); await settleJobs(host); tick(host);
+  assert.equal(runs.length, 1); assert.equal(job.enabled, false); assert.equal(job.nextRunAt, null);
+  const before = JSON.stringify(job); await assert.rejects(host.updateJob('main', job.id, { enabled: true }), /nextRunAt/); assert.equal(JSON.stringify(job), before);
+  await host.updateJob('main', job.id, { enabled: true, nextRunAt: new Date().toISOString() }); tick(host); await settleJobs(host);
+  assert.equal(runs.length, 2); assert.equal(job.enabled, false);
+});
 async function settleJobs(host) {
   for (let attempt = 0; attempt < 200; attempt++) {
     if (!host.records.some(chat => chat.jobs.some(job => job.running))) { await host.writeQueue; return; }

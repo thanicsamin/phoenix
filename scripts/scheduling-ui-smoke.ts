@@ -37,6 +37,10 @@ const modelServer = createServer(async (request, response) => {
   if (prompt.includes('QA_FAIL')) { response.writeHead(503); return response.end('Fixture provider unavailable'); }
   response.writeHead(200, { 'Content-Type': 'text/event-stream' }); response.flushHeaders();
   const result = input.messages.at(-1)?.role === 'tool';
+  if (prompt.includes('QA_MANAGE ')) {
+    if (!result) return finish(response, '', { name: 'schedule', input: JSON.parse(/QA_MANAGE (\{[^\n]+\})/.exec(prompt)[1]) });
+    return finish(response, `Managed: ${input.messages.at(-1).content}`);
+  }
   if (prompt.includes('QA_BLOCKCHAIN')) {
     const call = input.messages.filter(message => message.tool_calls).at(-1)?.tool_calls.at(-1)?.function.name;
     if (!result) return finish(response, '', { name: 'browser', input: { action: 'navigate', url: 'https://fixture.example.invalid' } });
@@ -162,7 +166,33 @@ try {
   page = await context.newPage(); page.on('pageerror', error => errors.push(error.message)); await page.goto(`${base}/?chat=${chat.id}`); await page.locator('#app').waitFor({ state: 'visible' });
   await page.locator('#messages .message.assistant').filter({ hasText: 'QA_CLOSED' }).waitFor({ state: 'visible' });
   assert.deepEqual(errors, []);
-  console.log('Scheduling E2E passed: UI creation, real Pi streaming, per-chat histories, one-shot, catch-up without replay storms, interrupted recovery, disabled jobs, private worker reply/approval/error notifications, owner denial, retry persistence, notification opt-out, native shell injection blocked without execution and jobs running with the browser closed.');
+  // Native conversational management reuses the same durable records and guards.
+  const management = await api('/api/new', { title: 'Conversational scheduling fixture' });
+  await page.locator('#chat-list').getByText(management.title, { exact: true }).click();
+  async function manage(input, approve = false, allow = true) {
+    const previous = host.loaded.get(management.id)?.session.messages.length || 0;
+    await page.locator('#message').fill(`QA_MANAGE ${JSON.stringify(input)}`); await page.locator('#send').click();
+    if (approve) {
+      await page.locator('#approvals').getByText(/private data/).waitFor({ state: 'visible' });
+      assert.equal(await page.locator('#approvals').getByRole('button', { name: 'Allow in this chat', exact: true }).count(), 0);
+      await page.locator('#approvals').getByRole('button', { name: allow ? 'Allow once' : 'Deny', exact: true }).click();
+    }
+    await until(() => { const loaded = host.loaded.get(management.id); return loaded && !loaded.pending && loaded.session.messages.length > previous && loaded.session.messages.at(-1)?.role === 'assistant'; }, 'Native scheduling action did not finish');
+    const tool = host.loaded.get(management.id).session.messages.filter(item => item.role === 'toolResult' && item.toolName === 'schedule').at(-1);
+    assert.equal(tool.isError, !allow); const text = tool.content.filter(item => item.type === 'text').map(item => item.text).join('\n'); return allow ? JSON.parse(text) : text;
+  }
+  const managed = await manage({ name: 'Weekly offers', prompt: 'Synthetic offers only', everyMinutes: 10080 });
+  const listed = await manage({ action: 'list' }); assert.equal(listed.length, 1); assert.equal(listed[0].id, managed.id);
+  await manage({ action: 'update', id: managed.id, name: 'Hourly offers', prompt: 'Compare synthetic delivered prices', everyMinutes: 60, enabled: false }, true);
+  const changed = host.record(management.id).jobs[0]; assert.equal(changed.id, managed.id); assert.equal(changed.enabled, false); assert.equal(changed.everyMinutes, 60); assert.equal(changed.name, 'Hourly offers'); assert.equal(host.record(management.id).jobs.length, 1);
+  const saved = JSON.parse(await readFile(join(directory, 'chats.json'), 'utf8')).find(item => item.id === management.id).jobs[0]; assert.deepEqual(saved, changed);
+  const next = changed.nextRunAt;
+  await manage({ action: 'update', id: managed.id, enabled: true }, true); assert.equal(changed.enabled, true); assert.equal(changed.everyMinutes, 60); assert.equal(changed.nextRunAt, next);
+  await manage({ action: 'remove', id: managed.id }, true, false); assert.equal(host.record(management.id).jobs.length, 1);
+  await manage({ action: 'remove', id: managed.id }, true); assert.equal(host.record(management.id).jobs.length, 0);
+  assert.equal((await manage({ action: 'list' })).length, 0); assert.equal(host.record('main').jobs.length, 0);
+  assert.deepEqual(errors, []);
+  console.log('Scheduling E2E passed: UI creation, real Pi streaming, native create/list/change/pause/resume/cancel with durable IDs and per-action approval, per-chat histories, one-shot, catch-up without replay storms, interrupted recovery, disabled jobs, private worker reply/approval/error notifications, owner denial, retry persistence, notification opt-out, native shell injection blocked without execution and jobs running with the browser closed.');
 } finally {
   for (const response of held.values()) finish(response, 'Fixture cleanup');
   await browser.close(); if (host && !host.closing) await stop(); modelServer.closeAllConnections(); await new Promise(resolve => modelServer.close(resolve)); await rm(directory, { recursive: true, force: true });

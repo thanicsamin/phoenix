@@ -16,7 +16,7 @@ import { readFile, writeFile, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { modelChoices, providerChoices } from './models.ts';
 import { parseEndpoint, saveEndpoint } from './local-models.ts';
-import { jobSchema, modelSchema, thinkingSchema, folderSchema, foldersSchema, validLabel } from './config.ts';
+import { jobSchema, jobUpdateSchema, modelSchema, thinkingSchema, folderSchema, foldersSchema, validLabel } from './config.ts';
 import { Files } from './files.ts';
 import { Workspace } from './workspace.ts';
 import { log, redact } from './log.ts';
@@ -465,6 +465,23 @@ export class Host extends EventEmitter {
     const record = this.record(chatId);
     if (record.jobs.length >= 20) throw Object.assign(new Error('Job limit reached for this chat.'), { status: 409 });
     const job = this.jobRecord(input); record.jobs.push(job); await this.save(); return job;
+  }
+  async updateJob(chatId: string, id: string, input: unknown) {
+    const job = this.record(chatId).jobs.find(job => job.id === id);
+    if (!job) throw Object.assign(Error('Job not found in this chat.'), { status: 404 });
+    if (job.running) throw Object.assign(Error('Wait for this job to finish.'), { status: 409 });
+    const changes = jobUpdateSchema.parse(input);
+    const nextRunAt = changes.nextRunAt ?? (changes.everyMinutes !== undefined && changes.everyMinutes !== job.everyMinutes
+      ? new Date(Date.now() + Math.max(1, changes.everyMinutes) * 60000).toISOString() : job.nextRunAt);
+    if ((changes.enabled ?? job.enabled) && !nextRunAt) throw Error('Set nextRunAt when restarting a completed task.');
+    Object.assign(job, Object.fromEntries(Object.entries(changes).filter(([, value]) => value !== undefined)), { nextRunAt });
+    await this.save(); return job;
+  }
+  async removeJob(chatId: string, id: string) {
+    const record = this.record(chatId); const job = record.jobs.find(job => job.id === id);
+    if (!job) throw Object.assign(Error('Job not found in this chat.'), { status: 404 });
+    if (job.running) throw Object.assign(Error('Wait for this job to finish.'), { status: 409 });
+    record.jobs = record.jobs.filter(item => item !== job); await this.save();
   }
   async requestApproval(chatId: string, tool: string, args: unknown, signal?: AbortSignal, reason?: string): Promise<boolean> {
     if (!reason && tool !== 'browser_verification' && this.record(chatId).permissions.includes(tool)) return true;

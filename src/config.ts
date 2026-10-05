@@ -11,6 +11,9 @@ export const jobSchema = z.strictObject({
   everyMinutes: z.number().int().min(0).max(525600).default(0),
   nextRunAt: z.iso.datetime().optional(),
 });
+// Partial updates must not inherit the creation-time interval default.
+export const jobUpdateSchema = jobSchema.partial().extend({ everyMinutes: jobSchema.shape.everyMinutes.removeDefault().optional(), enabled: z.boolean().optional() })
+  .refine(input => Object.values(input).some(value => value !== undefined), 'Choose a field to change.');
 export const modelSchema = z.strictObject({ provider: z.enum(modelProviders), id: z.string().min(1) });
 export const thinkingSchema = z.enum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
 export const validLabel = (value: string) => [...value].every(char => char.charCodeAt(0) >= 32 && char.charCodeAt(0) !== 127);

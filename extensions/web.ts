@@ -320,9 +320,7 @@ export function createWebServer(host: Host, logger = log) {
       }
       if (request.method === 'POST' && path === '/api/jobs/remove') {
         const { chatId = 'main', id } = await readBody(request);
-        const record = host.record(chatId);
-        if (record.jobs.some(job => job.id === id && job.running)) return send(409, { error: 'Wait for this job to finish.' });
-        record.jobs = record.jobs.filter(job => job.id !== id); await host.save(); return send(200, {});
+        await host.removeJob(chatId, id); return send(200, {});
       }
       if (request.method === 'POST' && path === '/api/model') {
         const { chatId = 'main', ...selection } = await readBody(request);

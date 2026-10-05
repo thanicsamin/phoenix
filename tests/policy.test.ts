@@ -36,6 +36,10 @@ test('tool contracts distinguish local previews, untrusted reads, private reads 
   assert.ok(approvalReason('browser', { action: 'navigate', url: 'https://example.com/?secret=1' }, privateData, false, false));
   assert.equal(approvalReason('browser', { action: 'snapshot' }, privateData, false, false), '');
   assert.equal(approvalReason('browser', { action: 'navigate' }, privateData, false, true), '');
+  assert.equal(readRisk('schedule', { action: 'list' }, false), privateData);
+  assert.equal(approvalReason('schedule', { action: 'list' }, untrusted | privateData, false, false), '');
+  assert.ok(approvalReason('schedule', { action: 'list' }, 0, true, false));
+  for (const action of ['create', 'update', 'remove']) assert.ok(approvalReason('schedule', { action }, privateData | untrusted, false, false));
 });
 test('outside reads are marked before execution, and denied commands, memory changes and jobs stay blocked', async t => {
   const { host, hooks } = await fixture(t);

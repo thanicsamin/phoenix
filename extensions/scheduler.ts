@@ -71,13 +71,30 @@ export default function scheduler(pi: ExtensionAPI, host: Host, _options: Extens
     timer = setInterval(() => tick(host), 1000);
   }, () => { clearInterval(timer); });
   pi.registerTool({
-    name: 'schedule', label: 'Schedule a task',
-    description: 'Create a scheduled task in this chat. Results return to this conversation while the browser is closed. everyMinutes=0 runs once; otherwise repeat at that interval. nextRunAt is an ISO UTC timestamp. Only create tasks requested by the owner.',
-    parameters: Type.Object({ name: Type.String({ maxLength: 100 }), prompt: Type.String({ maxLength: 16000 }),
-      everyMinutes: Type.Integer({ minimum: 0, maximum: 525600 }), nextRunAt: Type.Optional(Type.String()) }),
+    name: 'schedule', label: 'Scheduled tasks',
+    description: 'Manage scheduled tasks in this chat only. action defaults to create (name and prompt required). list returns saved tasks and IDs; use those IDs to update or remove the task the owner means. update changes only supplied fields; enabled=false pauses, enabled=true resumes. Changing everyMinutes resets the next run from now unless nextRunAt is supplied; resuming an overdue task catches up once. Restarting a completed task requires nextRunAt. everyMinutes=0 runs once; otherwise repeat at that interval. nextRunAt is an ISO UTC timestamp. Results return here while the browser is closed. Only change tasks requested by the owner. Do not guess IDs or silently recreate tasks when asked to change or cancel them.',
+    parameters: Type.Object({ action: Type.Optional(Type.Union([Type.Literal('create'), Type.Literal('list'), Type.Literal('update'), Type.Literal('remove')])),
+      id: Type.Optional(Type.String({ minLength: 1 })), name: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })), prompt: Type.Optional(Type.String({ minLength: 1, maxLength: 16000 })),
+      everyMinutes: Type.Optional(Type.Integer({ minimum: 0, maximum: 525600 })), nextRunAt: Type.Optional(Type.String()), enabled: Type.Optional(Type.Boolean()) }),
     async execute(_id, input) {
-      const job = await host.addJob(chatId, input);
-      return { content: [{ type: 'text', text: `Scheduled ${job.name}. Next run: ${job.nextRunAt}. Job ID: ${job.id}` }], details: {} };
+      const { action = 'create', id, ...fields } = input;
+      const changes = Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
+      let result: unknown;
+      if (action === 'list') {
+        if (id || Object.keys(changes).length) throw Error('List needs no ID or changes.');
+        result = host.record(chatId).jobs;
+      } else if (action === 'create') {
+        if (id || fields.enabled !== undefined) throw Error('Create a task with name, prompt and optional timing fields.');
+        result = await host.addJob(chatId, changes);
+      } else {
+        if (!id) throw Error('List tasks first, then use the saved job ID.');
+        if (action === 'update') result = await host.updateJob(chatId, id, changes);
+        else {
+          if (Object.keys(changes).length) throw Error('Remove needs only the saved job ID.');
+          await host.removeJob(chatId, id); result = { removed: id };
+        }
+      }
+      return { content: [{ type: 'text', text: JSON.stringify(result) }], details: {} };
     },
   });
 }

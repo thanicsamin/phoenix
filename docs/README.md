@@ -142,6 +142,11 @@ interrupted jobs. A repeating job catches up once, then starts its next interval
 after completion; it does not replay every missed interval. Completed one-time
 jobs stay completed. Failed jobs retry after one minute, with the error visible
 in the chat. Interrupted jobs may repeat steps completed before the restart.
+Ask Phoenix to list, change, pause, resume or cancel tasks in the current chat.
+It updates the saved task rather than creating a duplicate. Changing the repeat
+interval sets the next run from now unless you specify a time. Resuming an overdue
+task catches up once; restarting a completed one-time task needs a new start time.
+Existing approval rules still apply after reading private data or outside content.
 
 Incoming email wakes an Inbox chat. Its content is treated as untrusted data;
 external actions and privileged email-triggered tools require approval in the
