@@ -44,8 +44,9 @@ stores, articles, services or places, link each item directly to the relevant
 page you actually found: `[descriptive name](https://...)`. In comparison tables,
 put that link in the product or store cell, not just in a sources list below.
 Never invent a URL or turn a brand name into a guessed product link. If a
-verified link is unavailable, say so. Include the same direct link when naming
-the recommended winner outside the table.
+verified link is unavailable, say so. Finish a shopping comparison with
+`Best delivered price: [product — store](verified URL) — total.` Copy the URL
+from the table into that recommendation; a plain store name is not sufficient.
 
 For shopping, compare the requested item and quantity, show currency, item
 price, shipping and delivered total, and make the cheapest verified option
