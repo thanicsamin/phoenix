@@ -148,7 +148,8 @@ export class Chat extends EventEmitter {
         const attachment = message.toolName === 'attach_file' && attachmentOf(message.details);
         if (attachment) messages.push({ role: 'assistant', text: '', attachments: [attachment] });
       } else if (message.role === 'user' || message.role === 'assistant') {
-        const text = textOf(message); messages.push({ role: message.role, ...(this.files?.display(text, this.chatId) || { text }) });
+        const text = textOf(message); const display = this.files?.display(text, this.chatId) || { text };
+        if (display.text || display.attachments?.length) messages.push({ role: message.role, ...display });
       }
     }
     messages.reverse();

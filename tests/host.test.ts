@@ -50,6 +50,22 @@ test('chat snapshots visit only the visible tail and keep attachments, queue edi
   history.splice(0, history.length, { role: 'user', content: 'After compaction' }); assert.equal(chat.state().messages[0].text, 'After compaction');
 });
 
+test('tool-only model turns cannot hide the conversation, and attachment-only messages stay visible', () => {
+  const chat = new Host({ model: { provider: 'opencode', id: 'fixture' } }, '/tmp', '/tmp');
+  const attachment = { id: 'fixture-file', chatId: 'main', name: 'request.pdf', size: 8, mime: 'application/pdf' };
+  const history = [{ role: 'user', content: 'Compare real stores' }, { role: 'assistant', content: 'I will research that.' }, { role: 'user', content: 'Attachment marker' }];
+  for (let index = 0; index < 150; index++) history.push(
+    { role: 'assistant', content: [{ type: 'toolCall', name: 'browser', arguments: { action: 'snapshot' } }] },
+    { role: 'toolResult', toolName: 'browser', content: 'Public page' });
+  chat.session = { messages: history, modelRuntime: { hasConfiguredAuth: () => true } };
+  chat.files = { display: text => text === 'Attachment marker' ? { text: '', attachments: [attachment] } : { text } };
+  assert.deepEqual(chat.state().messages, [
+    { role: 'user', text: 'Compare real stores' }, { role: 'assistant', text: 'I will research that.' }, { role: 'user', text: '', attachments: [attachment] },
+  ]);
+  history.push({ role: 'assistant', content: 'Here is the comparison.' });
+  assert.equal(chat.state().messages.at(-1).text, 'Here is the comparison.');
+});
+
 test('queued edits change the actual delivered text and images, and reject stale or already-started edits', async () => {
   const chat = new Host({}, '/tmp', '/tmp'); let release; const calls = [];
   chat.attach({ messages: [], subscribe: () => () => {}, waitForIdle: async () => {}, prompt: async (text, options) => {

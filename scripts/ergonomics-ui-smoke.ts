@@ -176,6 +176,11 @@ try {
   await page.locator('#message').fill('Edit survives refresh'); await page.reload(); await page.locator('#app').waitFor({ state: 'visible' });
   assert.equal(await page.locator('#message').inputValue(), 'Edit survives refresh'); await page.getByRole('button', { name: 'Cancel editing queued message', exact: true }).click();
   sessions.get(chatId).finish(); await host.loaded.get(chatId).queue;
+  // Invisible tool-only turns cannot displace the question or earlier product links.
+  session.messages.push(...Array.from({ length: 150 }, () => ({ role: 'assistant', content: [{ type: 'toolCall', name: 'browser', arguments: { action: 'snapshot' } }] })), { role: 'assistant', content: 'Research QA complete.' }); host.changed();
+  await page.locator('#messages .message.assistant').getByText('Research QA complete.', { exact: true }).waitFor();
+  assert.equal(await page.locator('#messages .message.user').getByText('Hold long press fixture', { exact: true }).count(), 1);
+  assert.equal(await page.locator('#messages .message.assistant table a').count(), 2);
   // Consent identifies the site without changing the existing denial flow.
   const consent = host.requestApproval(chatId, 'browser', { action: 'click', selector: '#size', site: 'https://shop.example:8443' }, undefined, 'This chat has read outside content.');
   const approvalTitle = page.locator('#approvals strong');
