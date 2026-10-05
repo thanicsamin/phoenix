@@ -421,7 +421,7 @@ function renderJobs() {
   stableChildren('#job-list', [chatId, state.jobs], () => state.jobs.map(job => {
     const item = document.createElement('div'); item.className = 'job-item';
     const name = document.createElement('strong'); name.textContent = job.name;
-    const detail = document.createElement('p'); detail.textContent = job.running ? 'Running…' : job.nextRunAt ? `Next: ${new Date(job.nextRunAt).toLocaleString()}` : 'Completed';
+    const detail = document.createElement('p'); detail.textContent = job.running ? 'Running…' : job.nextRunAt ? job.enabled ? `Next: ${new Date(job.nextRunAt).toLocaleString()}` : 'Paused' : 'Completed';
     const error = document.createElement('p'); error.className = 'error'; error.textContent = job.lastError || '';
     const actions = document.createElement('div'); actions.className = 'job-actions';
     for (const [label, path] of [['Run now', '/api/jobs/run'], ['Remove', '/api/jobs/remove']]) {

@@ -185,9 +185,11 @@ try {
   const listed = await manage({ action: 'list' }); assert.equal(listed.length, 1); assert.equal(listed[0].id, managed.id);
   await manage({ action: 'update', id: managed.id, name: 'Hourly offers', prompt: 'Compare synthetic delivered prices', everyMinutes: 60, enabled: false }, true);
   const changed = host.record(management.id).jobs[0]; assert.equal(changed.id, managed.id); assert.equal(changed.enabled, false); assert.equal(changed.everyMinutes, 60); assert.equal(changed.name, 'Hourly offers'); assert.equal(host.record(management.id).jobs.length, 1);
+  await page.locator('#jobs').click(); await page.locator('#job-list').getByText('Paused', { exact: true }).waitFor({ state: 'visible' }); await page.getByRole('button', { name: 'Close jobs', exact: true }).click();
   const saved = JSON.parse(await readFile(join(directory, 'chats.json'), 'utf8')).find(item => item.id === management.id).jobs[0]; assert.deepEqual(saved, changed);
   const next = changed.nextRunAt;
   await manage({ action: 'update', id: managed.id, enabled: true }, true); assert.equal(changed.enabled, true); assert.equal(changed.everyMinutes, 60); assert.equal(changed.nextRunAt, next);
+  await page.locator('#jobs').click(); await page.locator('#job-list').getByText(/^Next:/).waitFor({ state: 'visible' }); await page.getByRole('button', { name: 'Close jobs', exact: true }).click();
   await manage({ action: 'remove', id: managed.id }, true, false); assert.equal(host.record(management.id).jobs.length, 1);
   await manage({ action: 'remove', id: managed.id }, true); assert.equal(host.record(management.id).jobs.length, 0);
   assert.equal((await manage({ action: 'list' })).length, 0); assert.equal(host.record('main').jobs.length, 0);
