@@ -101,6 +101,18 @@ try {
   const artifact = await tools.get(chatId).attach_file.execute('fixture', { path: 'answer.png' });
   session.messages.push({ role: 'toolResult', toolName: 'attach_file', details: artifact.details }, { role: 'assistant', content: `Here is the image.\n![Inline answer](/api/files/image?chat=${chatId}&id=${artifact.details.attachment.id})` }); host.changed();
   await page.waitForFunction(() => document.querySelector('.message.assistant .markdown img')?.naturalWidth > 0);
+
+  session.messages.push({ role: 'assistant', content: '| Product | Item | Shipping | Total |\n| --- | --- | --- | --- |\n| [Shallots, 20 g](https://shop.example/products/shallots?size=20&ref=compare) | $8.00 | $3.00 | $11.00 |\n| [Shallots, 20 g](https://other.example/item/123) | $9.00 | Unknown | Unknown |' }); host.changed();
+  const product = page.locator('.message.assistant table a').first(); await product.waitFor();
+  assert.equal(await product.getAttribute('href'), 'https://shop.example/products/shallots?size=20&ref=compare');
+  assert.equal(await product.getAttribute('target'), '_blank');
+  assert.match(await product.getAttribute('rel'), /noopener/);
+  for (const width of [1280, 390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `Shopping table at ${width}px`);
+    await product.focus(); assert.equal(await product.evaluate(element => element === document.activeElement), true);
+  }
+  await page.setViewportSize({ width: 1280, height: 900 });
   // Watching doesn't abort the active session. Taking and returning keep the viewer.
   await tools.get(chatId).browser.execute('fixture', { action: 'navigate', url: `http://127.0.0.1:${website.address().port}` });
   await api('/api/prompt', { chatId, message: 'Hold for viewing' });

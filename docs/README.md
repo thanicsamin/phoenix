@@ -335,6 +335,8 @@ owner chats, searching before adding a duplicate. Task and diary notes stay
 in that chat. `scope=owner` shares durable personal facts across owner chats
 under **Files → memory → owner**. Raw notes survive compaction, and a correction
 appends a dated note superseding the old fact rather than rewriting its history.
+Consecutive identical notes on the same day are stored once, including after a
+restart. Notes after an intervening correction or on a different day are retained.
 
 Enable browser notifications in **Settings** for replies, failures and approvals
 in background chats. Notification bodies do not include private message text.

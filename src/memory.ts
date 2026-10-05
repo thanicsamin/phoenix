@@ -30,6 +30,21 @@ export class MemoryJournal {
     const handle = await open(await this.workspace.path(file, true), 'a+', 0o600);
     try {
       const { size } = await handle.stat(); const last = Buffer.alloc(1);
+      // A retried remember call must not fill the journal with the same note.
+      // Only compare the last valid entry today: intervening corrections and
+      // repeated events on another day still deserve their own dated records.
+      if (size) {
+        const tail = Buffer.alloc(Math.min(size, 8192));
+        const { bytesRead } = await handle.read(tail, 0, tail.length, size - tail.length);
+        for (const line of tail.subarray(0, bytesRead).toString('utf8').split('\n').reverse()) {
+          try {
+            const note = JSON.parse(line);
+            if (typeof note.text !== 'string' || typeof note.at !== 'string') continue;
+            if (note.text === text.trim()) return day;
+            break;
+          } catch { /* Ignore an interrupted append, as notes() does. */ }
+        }
+      }
       if (size) await handle.read(last, 0, 1, size - 1);
       // Preserve a partial failed append as its own line, so the next note can
       // still be recovered without rewriting any acknowledged journal record.

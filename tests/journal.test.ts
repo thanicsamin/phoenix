@@ -62,3 +62,32 @@ test('recent daily corrections take priority over old summaries within the conte
   assert.match(context, /Newest daily correction/); assert.match(context, /A direct correction/);
   assert.ok(context.length < 9000);
 });
+
+test('repeated remembers reuse the last daily note without erasing corrections or other scopes', async t => {
+  const { root, journal } = await fixture(t);
+  const first = new Date('2026-10-05T01:00:00Z');
+  await journal.note('Prefers dark mode.', first);
+  const path = join(root, 'memory/chats/main/journal/2026/10/05.jsonl');
+  const original = await readFile(path, 'utf8');
+  await new MemoryJournal(root, 'main').note('  Prefers dark mode.  ', new Date('2026-10-05T02:00:00Z'));
+  assert.equal(await readFile(path, 'utf8'), original, 'A retry keeps the original timestamp and bytes');
+  await appendFile(path, '{"at":"partial');
+  await journal.note('Prefers dark mode.', first);
+  assert.equal(await readFile(path, 'utf8'), original + '{"at":"partial');
+  await journal.note('Correction: prefers light mode.', first);
+  await journal.note('Prefers dark mode.', first);
+  assert.equal((await readFile(path, 'utf8')).split('\n').filter(line => line.includes('"text":')).length, 3);
+  await journal.note('Prefers dark mode.', new Date('2026-10-06T01:00:00Z'));
+  assert.match(await journal.read('2026-10-06'), /Prefers dark mode/);
+  const owner = new MemoryJournal(root, 'owner'); await owner.note('Prefers dark mode.', first);
+  assert.match(await owner.read('2026-10-05'), /Prefers dark mode/);
+});
+
+test('serialized concurrent remember calls do not duplicate the daily journal', async t => {
+  const { root } = await fixture(t); const host = { workspace: root, extensions: {}, loaded: new Map([['main', { source: 'web' }]]) };
+  let tool;
+  memory({ on() {}, registerTool: value => { tool = value; } }, host, {}, 'main');
+  await Promise.all(Array.from({ length: 12 }, () => tool.execute('retry', { action: 'remember', text: 'A stable synthetic preference.' })));
+  const journal = new MemoryJournal(root, 'main'); const output = await journal.read('all');
+  assert.equal(output.split('A stable synthetic preference.').length - 1, 1);
+});

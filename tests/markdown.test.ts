@@ -20,6 +20,14 @@ test('Markdown renders tables, links, headings and code while escaping raw HTML'
   assert.match(render('```js\nconst x = "<b>";\n```'), /<pre><code class="language-js">[\s\S]*&lt;b&gt;/);
 });
 
+test('shopping table cells retain direct product links, currency and shipping details', () => {
+  const html = render('| Product | Item | Shipping | Total |\n| --- | --- | --- | --- |\n| [Shallots, 20 g](https://shop.example/products/shallots?size=20&ref=compare) | $8.00 | $3.00 | $11.00 |\n| [Shallots, 20 g](https://other.example/item/123) | $9.00 | Unknown | Unknown |');
+  assert.match(html, /<td><a href="https:\/\/shop\.example\/products\/shallots\?size=20&amp;ref=compare" target="_blank" rel="noopener noreferrer">Shallots, 20 g<\/a><\/td>/);
+  assert.match(html, /<td>\$11\.00<\/td>/);
+  assert.match(html, /<td>Unknown<\/td>/);
+  assert.doesNotMatch(html, /class="katex"/);
+});
+
 test('LaTeX accepts dollar and bracket delimiters, preserves code and prices, and rejects trusted commands', () => {
   for (const math of ['$x^2$', '$$\\frac{1}{2}$$', '\\(x^2\\)', '\\[\\frac{1}{2}\\]']) {
     assert.match(render(math), /class="katex"/);
