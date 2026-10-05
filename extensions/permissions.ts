@@ -31,7 +31,11 @@ export default function permissions(pi: ExtensionAPI, host: Host, _options: Exte
       const verification = !(before & privateData) && externalWrite && event.toolName === 'browser' && await host.browserControls?.get(chatId)?.verificationAllowed?.();
       if (before !== (record.readRisk || 0)) continue;
       if ((reason || externalWrite) && !verification) {
-        const approved = await host.requestApproval(chatId, event.toolName, event.input, undefined, reason || undefined);
+        const location = event.toolName === 'browser' && event.input.action !== 'navigate' ? host.browserPages?.get(chatId)?.() : undefined;
+        // Identify the page for consent, without exposing its path/query tokens.
+        const args = location && URL.canParse(location) && ['http:', 'https:'].includes(new URL(location).protocol)
+          ? { ...event.input, site: new URL(location).origin } : event.input;
+        const approved = await host.requestApproval(chatId, event.toolName, args, undefined, reason || undefined);
         log.info(approved ? 'policy.allowed' : 'policy.denied', { chatId, tool: event.toolName, rule: reason ? 'information-flow' : 'external-action' });
         if (!approved) return { block: true, reason: 'The owner did not approve this action. Keep the work as a draft and report it in chat.' };
         // Another read may finish while consent is pending. Recheck its stricter contract.

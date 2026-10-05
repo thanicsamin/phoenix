@@ -282,7 +282,8 @@ function render(state: ChatState) {
     const card = document.createElement('div'); card.className = 'approval-card';
     const args = approval.args && typeof approval.args === 'object' ? approval.args as Record<string, unknown> : {};
     const verification = approval.tool === 'browser_verification';
-    const title = document.createElement('strong'); title.textContent = verification ? args.attempts ? 'Still blocked after 3 tries' : 'Website needs verification' : `Allow ${approval.tool}?`;
+    const site = approval.tool === 'browser' && typeof args.site === 'string' && URL.canParse(args.site) ? new URL(args.site).host : '';
+    const title = document.createElement('strong'); title.textContent = verification ? args.attempts ? 'Still blocked after 3 tries' : 'Website needs verification' : site ? `Allow browser on ${site}?` : `Allow ${approval.tool}?`;
     const preview = document.createElement('pre'); preview.textContent = verification ? String(args.site || '') : JSON.stringify(approval.args, null, 2);
     if (approval.reason) { const reason = document.createElement('p'); reason.className = 'muted'; reason.textContent = approval.reason; card.append(reason); }
     const actions = document.createElement('div'); actions.className = 'approval-actions';

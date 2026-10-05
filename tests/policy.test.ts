@@ -51,6 +51,31 @@ test('outside reads are marked before execution, and denied commands, memory cha
   assert.equal(await hooks.tool_call({ toolName: 'read', input: { path: 'src/main.ts' } }), undefined);
   assert.equal(await hooks.tool_call({ toolName: 'browser', input: { action: 'navigate', url: 'https://another-store.example' } }), undefined);
 });
+test('browser consent identifies only the current site and preserves native approval and action inputs', async t => {
+  const { host, hooks } = await fixture(t);
+  host.record().readRisk = untrusted;
+  let location = 'https://user:secret@shop.example:8443/products/shallots?token=private#size';
+  host.browserPages = new Map([['main', () => location]]);
+  const input = { action: 'click', selector: '#size' };
+  const denied = await decision(host, () => hooks.tool_call({ toolName: 'browser', input }));
+  assert.deepEqual(denied.approval.args, { ...input, site: 'https://shop.example:8443' });
+  assert.deepEqual(input, { action: 'click', selector: '#size' });
+  assert.match(denied.approval.reason, /outside content/); assert.equal(denied.result.block, true);
+  const allowed = await decision(host, () => hooks.tool_call({ toolName: 'browser', input }), true, true);
+  assert.equal(allowed.result, undefined); assert.deepEqual(host.record().permissions, []);
+  for (const url of ['about:blank', 'not a URL', undefined]) {
+    location = url;
+    const fallback = await decision(host, () => hooks.tool_call({ toolName: 'browser', input }));
+    assert.deepEqual(fallback.approval.args, input); assert.equal(fallback.result.block, true);
+  }
+  location = 'https://shop.example/current'; host.record().readRisk = privateData;
+  const navigation = { action: 'navigate', url: 'https://destination.example/item' };
+  const redirected = await decision(host, () => hooks.tool_call({ toolName: 'browser', input: navigation }));
+  assert.deepEqual(redirected.approval.args, navigation); assert.equal(redirected.result.block, true);
+  const command = { command: 'echo fixture' };
+  const other = await decision(host, () => hooks.tool_call({ toolName: 'bash', input: command }));
+  assert.deepEqual(other.approval.args, command); assert.equal(other.result.block, true);
+});
 test('private data cannot use remembered permissions, alternate tools, CAPTCHA consent or permanent approval', async t => {
   const { host, hooks } = await fixture(t); host.record().permissions.push('email_send', 'bash', 'browser');
   await hooks.tool_call({ toolName: 'finance', input: { action: 'balances' } }); assert.equal(host.record().readRisk, 3);

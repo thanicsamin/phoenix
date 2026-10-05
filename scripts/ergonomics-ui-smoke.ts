@@ -176,6 +176,19 @@ try {
   await page.locator('#message').fill('Edit survives refresh'); await page.reload(); await page.locator('#app').waitFor({ state: 'visible' });
   assert.equal(await page.locator('#message').inputValue(), 'Edit survives refresh'); await page.getByRole('button', { name: 'Cancel editing queued message', exact: true }).click();
   sessions.get(chatId).finish(); await host.loaded.get(chatId).queue;
+  // Consent identifies the site without changing the existing denial flow.
+  const consent = host.requestApproval(chatId, 'browser', { action: 'click', selector: '#size', site: 'https://shop.example:8443' }, undefined, 'This chat has read outside content.');
+  const approvalTitle = page.locator('#approvals strong');
+  await approvalTitle.getByText('Allow browser on shop.example:8443?', { exact: true }).waitFor();
+  for (const width of [1280, 390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `Browser consent at ${width}px`);
+  }
+  assert.equal(await page.getByRole('button', { name: 'Allow in this chat', exact: true }).count(), 0);
+  await page.getByRole('button', { name: 'Deny', exact: true }).click(); assert.equal(await consent, false);
+  const fallback = host.requestApproval(chatId, 'browser', { action: 'click', selector: '#size' }, undefined, 'This chat has read outside content.');
+  await approvalTitle.getByText('Allow browser?', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Deny', exact: true }).click(); assert.equal(await fallback, false);
   assert.deepEqual(errors, []);
   console.log('Ergonomics UI passed: native image paste, file paste, normal text paste, local image/PDF thumbnails, agent images, queue edits/draft restore/refresh/long press, real browser view/take/return, worker notifications, chat order/pin/unpin, animated desktop sidebar and 320/390/620px mobile layouts.');
 } finally {
