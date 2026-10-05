@@ -194,6 +194,62 @@ try {
   const fallback = host.requestApproval(chatId, 'browser', { action: 'click', selector: '#size' }, undefined, 'This chat has read outside content.');
   await approvalTitle.getByText('Allow browser?', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Deny', exact: true }).click(); assert.equal(await fallback, false);
+  // An older HTTP refresh must not erase a newer socket reply while its
+  // notification waits for the worker. Delay both to make the race repeatable.
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const background = await api('/api/new', { title: 'Notification race QA' });
+  await page.locator('#chat-list').getByText(background.title, { exact: true }).waitFor({ state: 'attached' });
+  await page.evaluate(() => {
+    const serviceWorker = navigator.serviceWorker; const ready = serviceWorker.ready;
+    let release; window.releaseNotificationWorker = () => { delete serviceWorker.ready; release(ready); };
+    window.pendingNotificationWorkers = 0;
+    const delayed = new Promise(resolve => { release = resolve; });
+    Object.defineProperty(serviceWorker, 'ready', { configurable: true, get: () => { window.pendingNotificationWorkers++; return delayed; } });
+  }, undefined, {}, false);
+  let releaseRefresh; let capturedRefresh; let fulfilledRefresh;
+  const captured = new Promise(resolve => { capturedRefresh = resolve; });
+  const fulfilled = new Promise(resolve => { fulfilledRefresh = resolve; });
+  const delayedRefresh = new Promise(resolve => { releaseRefresh = resolve; });
+  const refreshURL = `${base}/api/state?chat=${chatId}`;
+  await page.route(refreshURL, async route => {
+    const response = await route.fetch(); capturedRefresh(); await delayedRefresh;
+    await route.fulfill({ response }); fulfilledRefresh();
+  }, { times: 1 });
+  await page.getByRole('button', { name: 'Pin chat', exact: true }).click(); await captured;
+  await api('/api/prompt', { chatId: background.id, message: 'Immediate background reply' });
+  let waitingForWorker = false;
+  for (let attempt = 0; attempt < 120 && !waitingForWorker; attempt++) {
+    waitingForWorker = await page.evaluate(() => window.pendingNotificationWorkers > 0, undefined, {}, false);
+    if (!waitingForWorker) await page.waitForTimeout(100);
+  }
+  assert.ok(waitingForWorker, 'The background reply did not reach notification dispatch');
+  session.messages.push({ role: 'assistant', content: 'Newer socket result.' }); host.changed();
+  await page.locator('#messages').getByText('Newer socket result.', { exact: true }).waitFor();
+  releaseRefresh(); await fulfilled;
+  await page.waitForTimeout(100);
+  await page.evaluate(() => window.releaseNotificationWorker(), undefined, {}, false);
+  for (let attempt = 0; attempt < 50; attempt++) {
+    notifications = await page.evaluate(async () => (await (await navigator.serviceWorker.ready).getNotifications()).map(item => ({ chatId: item.data.chatId })), undefined, {}, false);
+    if (notifications.some(item => item.chatId === background.id)) break;
+    await page.waitForTimeout(100);
+  }
+  assert.ok(notifications.some(item => item.chatId === background.id), 'An older HTTP refresh erased a pending background reply notification');
+  assert.equal(await page.locator('#messages').getByText('Newer socket result.', { exact: true }).count(), 1, 'An older HTTP refresh replaced the newer conversation');
+  // A fresh connection accepts a reset server counter, and excludes a response
+  // started on the previous connection even if its old counter was higher.
+  const capturedAgain = new Promise(resolve => { capturedRefresh = resolve; });
+  const fulfilledAgain = new Promise(resolve => { fulfilledRefresh = resolve; });
+  const delayedAgain = new Promise(resolve => { releaseRefresh = resolve; });
+  await page.route(refreshURL, async route => {
+    const response = await route.fetch(); capturedRefresh(); await delayedAgain;
+    await route.fulfill({ response }); fulfilledRefresh();
+  }, { times: 1 });
+  await page.getByRole('button', { name: 'Unpin chat', exact: true }).click(); await capturedAgain;
+  host.revision = 0; session.messages.push({ role: 'assistant', content: 'After reconnect with a reset counter.' });
+  await page.evaluate('socket.close()', undefined, {}, false);
+  await page.locator('#messages').getByText('After reconnect with a reset counter.', { exact: true }).waitFor({ timeout: 10000 });
+  releaseRefresh(); await fulfilledAgain; await page.waitForTimeout(100);
+  assert.equal(await page.locator('#messages').getByText('After reconnect with a reset counter.', { exact: true }).count(), 1, 'An old connection response replaced the restarted server state');
   assert.deepEqual(errors, []);
   console.log('Ergonomics UI passed: native image paste, file paste, normal text paste, local image/PDF thumbnails, agent images, queue edits/draft restore/refresh/long press, real browser view/take/return, worker notifications, chat order/pin/unpin, animated desktop sidebar and 320/390/620px mobile layouts.');
 } finally {

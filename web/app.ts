@@ -68,7 +68,7 @@ function connectSocket() {
   if (!signedIn) return;
   const url = new URL('/api/socket', location.href); url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const connection = new WebSocket(url); socket = connection;
-  connection.addEventListener('open', () => connection.send(JSON.stringify({ chatId })));
+  connection.addEventListener('open', () => { latest = undefined; revision = -1; connection.send(JSON.stringify({ chatId })); });
   connection.addEventListener('message', event => {
     try { const state = JSON.parse(event.data); if (signedIn && socket === connection && state.chatId === chatId) render({ ...(latest?.chatId === chatId ? latest : {}), ...state }); } catch { /* polling remains available */ }
   });
@@ -97,10 +97,11 @@ async function api<P extends string>(path: P, body?: unknown): Promise<APIResult
 async function refresh() {
   const generation = authGeneration;
   const requestedChat = chatId;
+  const connection = socket;
   if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ chatId }));
   try {
     const state = await api(`/api/state?chat=${encodeURIComponent(requestedChat)}`);
-    if (state && signedIn && generation === authGeneration && requestedChat === chatId) render(state);
+    if (state && signedIn && generation === authGeneration && connection === socket && requestedChat === chatId) render(state);
   } catch (error) {
     if (error instanceof Error && 'status' in error && error.status === 404 && requestedChat !== 'main' && requestedChat === chatId && signedIn && generation === authGeneration) {
       switchChat('main'); revision = -1; $('#messages').replaceChildren(); await refresh();
@@ -208,6 +209,8 @@ function messageNode(role: string, text: string, queued = false, files: DraftFil
   article.append(label, body, links); return article;
 }
 function render(state: ChatState) {
+  // A slower HTTP refresh must not undo a newer socket update.
+  if (latest?.chatId === state.chatId && state.revision < latest.revision) return;
   latest = state;
   const ids = new Set(state.chats.map(chat => chat.id));
   let removedDrafts = false;
@@ -330,8 +333,9 @@ async function poll() {
     while (signedIn) {
       try {
         const requestedChat = chatId;
+        const connection = socket;
         const state = socket?.readyState === WebSocket.OPEN ? null : await api(`/api/state?chat=${encodeURIComponent(chatId)}&after=${revision}`);
-        if (state && requestedChat === chatId) render(state);
+        if (state && connection === socket && requestedChat === chatId) render(state);
       }
       catch (caught) {
         if (caught instanceof Error && 'status' in caught && caught.status === 404 && chatId !== 'main') { await refresh().catch(() => {}); continue; }
